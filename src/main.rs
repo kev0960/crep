@@ -8,9 +8,10 @@ mod index;
 mod indexer;
 mod result_viewer;
 mod searcher;
+mod tokenizer;
 
 fn main() {
-    let mut indexer = Indexer::new("/home/jaebum/learn/search");
+    let mut indexer = Indexer::new("/home/jaebum/Halfmore");
     let index = indexer.index_directory();
 
     let searcher = Searcher::new(&index);

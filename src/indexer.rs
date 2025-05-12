@@ -1,7 +1,11 @@
 use roaring::RoaringBitmap;
 use std::{collections::HashMap, path::Path};
+use walkdir::WalkDir;
 
-use crate::index::Index;
+use crate::{
+    index::{FileToWordPos, Index},
+    tokenizer::Tokenizer,
+};
 
 pub struct Indexer {
     git_root: String,
@@ -20,16 +24,39 @@ impl Indexer {
         let mut num_indexed_files: i64 = 0;
 
         let mut files = vec![];
+
         let mut word_to_bitmap: HashMap<String, RoaringBitmap> = HashMap::new();
+        let mut file_to_word_pos: FileToWordPos = HashMap::new();
 
-        for entry in std::fs::read_dir(path).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
+        for entry in WalkDir::new(path)
+            .into_iter()
+            .filter_entry(|entry| {
+                let file_name = entry.file_name().to_string_lossy();
+                if file_name.starts_with(".") {
+                    return false;
+                }
 
-            if path.is_file() {
-                Indexer::index_file(&mut word_to_bitmap, &path, num_indexed_files);
+                if file_name == "target" {
+                    return false;
+                }
 
-                files.push(path.to_string_lossy().to_string());
+                true
+            })
+            .filter_map(Result::ok)
+        {
+            if entry.file_type().is_file() {
+                if Indexer::index_file(
+                    &mut word_to_bitmap,
+                    &mut file_to_word_pos,
+                    entry.path(),
+                    num_indexed_files,
+                )
+                .is_err()
+                {
+                    continue;
+                }
+
+                files.push(entry.path().to_string_lossy().to_string());
                 num_indexed_files += 1;
             }
 
@@ -38,27 +65,31 @@ impl Indexer {
             }
         }
 
-        Index::new(files, word_to_bitmap)
+        Index::new(files, word_to_bitmap, file_to_word_pos)
     }
 
-    fn index_file(word_to_bitmap: &mut HashMap<String, RoaringBitmap>, path: &Path, file_id: i64) {
-        let content = std::fs::read_to_string(path).unwrap();
+    fn index_file(
+        word_to_bitmap: &mut HashMap<String, RoaringBitmap>,
+        file_to_word_pos: &mut FileToWordPos,
+        path: &Path,
+        file_id: i64,
+    ) -> Result<(), std::io::Error> {
+        let content = std::fs::read_to_string(path)?;
 
-        let mut word_to_lines = HashMap::<String, Vec<i32>>::new();
-        for (line_num, line) in content.lines().enumerate() {
-            let words = line.split_whitespace();
-            for word in words {
-                std::collections::hash_map::Entry::or_insert_with(
-                    word_to_lines.entry(word.to_string()),
-                    Vec::new,
-                )
-                .push(line_num as i32);
-            }
-        }
-
-        for word in word_to_lines.keys() {
+        let (all_words, word_pos_map) = Tokenizer::split_to_words(&content);
+        for word in all_words {
             let bitmap = word_to_bitmap.entry(word.to_string()).or_default();
             bitmap.insert(file_id as u32);
         }
+
+        file_to_word_pos.insert(
+            file_id as usize,
+            word_pos_map
+                .into_iter()
+                .map(|(word, positions)| (word.to_string(), positions))
+                .collect(),
+        );
+
+        Ok(())
     }
 }

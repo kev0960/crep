@@ -16,7 +16,16 @@ impl<'i> Searcher<'i> {
 
     pub fn search(&self, query: &str) -> Vec<SearchResult> {
         let words = query.split_whitespace();
-        let word_search_results = words.map(|w| self.search_word(w)).collect();
+        let word_search_results = words
+            .filter_map(|w| {
+                let results = self.search_word(w);
+                if results.is_empty() {
+                    return None;
+                }
+
+                Some(results)
+            })
+            .collect();
 
         // Now select the document that contains
         let raw_search_results = Searcher::combine_search_result(&word_search_results);
@@ -168,7 +177,7 @@ fn intersect_bitmaps(bitmaps: &[&RoaringBitmap]) -> Option<RoaringBitmap> {
     let first = (*iter.next()?).clone();
 
     let result = iter.fold(first, |mut total, bitmap| {
-        total = total & (*bitmap);
+        total &= *bitmap;
         total
     });
 
@@ -177,6 +186,8 @@ fn intersect_bitmaps(bitmaps: &[&RoaringBitmap]) -> Option<RoaringBitmap> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[test]
@@ -213,5 +224,21 @@ mod tests {
         assert_eq!(itr.next(), Some(vec![1, 1, 0]));
         assert_eq!(itr.next(), Some(vec![1, 1, 1]));
         assert_eq!(itr.next(), None);
+    }
+
+    #[test]
+    fn test_search_word() {
+        let index = Index::new(
+            /*files=*/ vec![],
+            /*word_to_bitmap=*/
+            HashMap::from_iter(vec![("a".to_owned(), RoaringBitmap::from_iter(vec![1]))]),
+            /*file_to_word_pos=*/ HashMap::new(),
+        );
+        let searcher = Searcher::new(&index);
+
+        assert_eq!(
+            searcher.search_word("a"),
+            vec![RoaringBitmap::from_iter(vec![1])]
+        );
     }
 }

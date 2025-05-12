@@ -1,3 +1,4 @@
+use owo_colors::OwoColorize;
 use regex::Regex;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -37,11 +38,13 @@ impl SearchResultViewer {
             self.file_path_to_content.insert(file_path.clone(), content);
         }
 
+        let mut search_result_index = 1;
         let mut total_output: Vec<String> = vec![];
-        for (index, result) in search_result.iter().enumerate() {
+        for result in search_result {
             for file in &result.files {
                 if let Some(output) = self.to_search_result(&result.words, file) {
-                    total_output.push(format!("{}.\n{}", index + 1, output))
+                    total_output.push(format!("{}. {}\n{}", search_result_index, file, output));
+                    search_result_index += 1;
                 }
             }
         }
@@ -94,7 +97,13 @@ impl SearchResultViewer {
                     let line = &lines[line_num];
 
                     // Highlight the words in the line.
-                    regex.replace_all(line, "*$0*").to_string()
+                    format!(
+                        "{:>6}| {}",
+                        line_num + 1,
+                        regex.replace_all(line, |caps: &regex::Captures| {
+                            caps[0].to_string().red().to_string()
+                        })
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
