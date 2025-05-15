@@ -35,7 +35,7 @@ impl<'i> Searcher<'i> {
             let files = result
                 .file_indexes
                 .iter()
-                .map(|index| self.index.files[*index as usize].clone())
+                .map(|index| (self.index.files[*index as usize].clone(), *index as usize))
                 .collect();
 
             search_result.push(SearchResult {
@@ -87,7 +87,7 @@ impl<'i> Searcher<'i> {
     fn search_word(&self, word: &str) -> Vec<(String, RoaringBitmap)> {
         let matched_words = match word.len() {
             1 | 2 => {
-                let matcher = Str::new(word).starts_with();
+                let matcher = Str::new(word);
                 self.index
                     .words
                     .search(matcher)
@@ -227,18 +227,47 @@ mod tests {
     }
 
     #[test]
-    fn test_search_word() {
+    fn test_search_single_letter() {
         let index = Index::new(
             /*files=*/ vec![],
             /*word_to_bitmap=*/
-            HashMap::from_iter(vec![("a".to_owned(), RoaringBitmap::from_iter(vec![1]))]),
+            HashMap::from_iter(vec![
+                ("a".to_owned(), RoaringBitmap::from_iter(vec![1])),
+                ("b".to_owned(), RoaringBitmap::from_iter(vec![1])),
+                ("ab".to_owned(), RoaringBitmap::from_iter(vec![1])),
+            ]),
             /*file_to_word_pos=*/ HashMap::new(),
         );
         let searcher = Searcher::new(&index);
 
         assert_eq!(
             searcher.search_word("a"),
-            vec![RoaringBitmap::from_iter(vec![1])]
+            vec![("a".to_owned(), RoaringBitmap::from_iter(vec![1]))]
+        );
+    }
+
+    #[test]
+    fn test_search_multi_letter() {
+        let index = Index::new(
+            /*files=*/ vec![],
+            /*word_to_bitmap=*/
+            HashMap::from_iter(vec![
+                ("foo".to_owned(), RoaringBitmap::from_iter(vec![1])),
+                ("foob".to_owned(), RoaringBitmap::from_iter(vec![2])),
+                ("boo".to_owned(), RoaringBitmap::from_iter(vec![3])),
+                ("far".to_owned(), RoaringBitmap::from_iter(vec![4])),
+            ]),
+            /*file_to_word_pos=*/ HashMap::new(),
+        );
+        let searcher = Searcher::new(&index);
+
+        assert_eq!(
+            searcher.search_word("foo"),
+            vec![
+                ("boo".to_owned(), RoaringBitmap::from_iter(vec![3])),
+                ("foo".to_owned(), RoaringBitmap::from_iter(vec![1])),
+                ("foob".to_owned(), RoaringBitmap::from_iter(vec![2])),
+            ]
         );
     }
 }

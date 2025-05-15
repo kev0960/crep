@@ -1,10 +1,13 @@
 use owo_colors::OwoColorize;
-use regex::Regex;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+use crate::index::FileToWordPos;
 
 pub struct SearchResult {
     pub words: Vec<String>,
-    pub files: Vec<String>,
+
+    // File path and the id.
+    pub files: Vec<(String, usize)>,
 }
 
 pub struct SearchResultViewer {
@@ -18,10 +21,15 @@ impl SearchResultViewer {
         }
     }
 
-    pub fn show_results(&mut self, search_result: &[SearchResult]) -> String {
+    pub fn show_results(
+        &mut self,
+        search_result: &[SearchResult],
+        file_to_word_pos: &FileToWordPos,
+    ) -> String {
         let files_to_read = search_result
             .iter()
             .flat_map(|r| &r.files)
+            .map(|(file_path, _)| file_path)
             .collect::<HashSet<_>>();
 
         for file_path in files_to_read {
@@ -41,9 +49,17 @@ impl SearchResultViewer {
         let mut search_result_index = 1;
         let mut total_output: Vec<String> = vec![];
         for result in search_result {
-            for file in &result.files {
-                if let Some(output) = self.to_search_result(&result.words, file) {
-                    total_output.push(format!("{}. {}\n{}", search_result_index, file, output));
+            for (file_path, file_id) in &result.files {
+                let word_pos = match file_to_word_pos.get(file_id) {
+                    Some(pos) => pos,
+                    None => continue,
+                };
+
+                if let Some(output) = self.to_search_result(&result.words, file_path, word_pos) {
+                    total_output.push(format!(
+                        "{}. {}\n{}",
+                        search_result_index, file_path, output
+                    ));
                     search_result_index += 1;
                 }
             }
@@ -52,61 +68,73 @@ impl SearchResultViewer {
         total_output.join("\n\n\n")
     }
 
-    fn to_search_result(&self, words: &[String], file: &str) -> Option<String> {
+    fn to_search_result(
+        &self,
+        words: &[String],
+        file: &str,
+        word_pos: &HashMap<String, Vec<(usize, usize)>>,
+    ) -> Option<String> {
         let lines = self.file_path_to_content.get(file)?;
 
-        let mut file_lines_to_show = BTreeSet::new();
-        let mut words_to_check = words.iter().collect::<HashSet<&String>>();
+        let mut file_line_and_pos_to_mark: BTreeMap<usize, Vec<(&str, usize)>> = BTreeMap::new();
 
-        for i in 0..lines.len() {
-            let line = &lines[i];
+        for word in words {
+            let positions = word_pos.get(word);
 
-            let mut word_found = HashSet::new();
-            for word in &words_to_check {
-                if line.contains(*word) {
-                    // We want to show the lines nearby the line that contains the word.
-                    if i > 0 {
-                        file_lines_to_show.insert(i - 1);
-                    }
-
-                    file_lines_to_show.insert(i);
-
-                    if i < lines.len() - 1 {
-                        file_lines_to_show.insert(i + 1);
-                    }
-
-                    word_found.insert(*word);
+            if let Some(line_and_cols) = positions {
+                if line_and_cols.is_empty() {
+                    continue;
                 }
-            }
 
-            words_to_check = words_to_check.difference(&word_found).cloned().collect();
+                let (line_num, col) = *line_and_cols.first().unwrap();
+
+                file_line_and_pos_to_mark
+                    .entry(line_num)
+                    .or_default()
+                    .push((word, col));
+            }
         }
 
-        // Now, construct the serach result.
-        let pattern = words
-            .iter()
-            .map(|w| regex::escape(w))
-            .collect::<Vec<_>>()
-            .join("|");
-        let regex = Regex::new(&pattern).unwrap();
+        let mut output_lines = Vec::new();
 
-        Some(
-            file_lines_to_show
-                .into_iter()
-                .map(|line_num| {
-                    let line = &lines[line_num];
+        let mut prev_line_num = None;
+        for (line_num, pos) in file_line_and_pos_to_mark {
+            if line_num > 0 && prev_line_num != Some(line_num - 1) {
+                output_lines.push(format!("{:>6}| {}", line_num, lines[line_num - 1]));
+            }
 
-                    // Highlight the words in the line.
-                    format!(
-                        "{:>6}| {}",
-                        line_num + 1,
-                        regex.replace_all(line, |caps: &regex::Captures| {
-                            caps[0].to_string().red().to_string()
-                        })
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
+            output_lines.push(format!(
+                "{:>6}| {}",
+                line_num + 1,
+                highlight_line_by_positions(&lines[line_num], &pos)
+            ));
+
+            prev_line_num = Some(line_num)
+        }
+
+        Some(output_lines.join("\n"))
     }
+}
+
+fn highlight_line_by_positions(line: &str, positions: &[(&str, usize)]) -> String {
+    let mut result = String::new();
+
+    let mut current = 0;
+    for pos in positions {
+        let (word, start) = pos;
+
+        if current < *start {
+            result.push_str(&line[current..*start]);
+        }
+
+        result.push_str(&word.to_string().red().to_string());
+
+        current = start + word.len();
+    }
+
+    if current < line.len() {
+        result.push_str(&line[current..]);
+    }
+
+    result
 }

@@ -32,6 +32,9 @@ fn main() {
         }
 
         let results = searcher.search(input);
-        println!("{}", result_viewer.show_results(&results));
+        println!(
+            "{}",
+            result_viewer.show_results(&results, &index.file_to_word_pos)
+        );
     }
 }
