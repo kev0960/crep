@@ -1,6 +1,6 @@
 use crate::{index::Index, result_viewer::SearchResult};
 use fst::{
-    Automaton, IntoStreamer,
+    IntoStreamer,
     automaton::{Levenshtein, Str},
 };
 use roaring::RoaringBitmap;
@@ -86,7 +86,7 @@ impl<'i> Searcher<'i> {
 
     fn search_word(&self, word: &str) -> Vec<(String, RoaringBitmap)> {
         let matched_words = match word.len() {
-            1 | 2 => {
+            1..=5 => {
                 let matcher = Str::new(word);
                 self.index
                     .words
@@ -263,10 +263,31 @@ mod tests {
 
         assert_eq!(
             searcher.search_word("foo"),
+            vec![("foo".to_owned(), RoaringBitmap::from_iter(vec![1])),]
+        );
+    }
+
+    #[test]
+    fn test_search_with_levenshtein() {
+        let index = Index::new(
+            /*files=*/ vec![],
+            /*word_to_bitmap=*/
+            HashMap::from_iter(vec![
+                ("foooooo".to_owned(), RoaringBitmap::from_iter(vec![1])),
+                ("boooooo".to_owned(), RoaringBitmap::from_iter(vec![2])),
+                ("booooor".to_owned(), RoaringBitmap::from_iter(vec![3])),
+                ("faooooo".to_owned(), RoaringBitmap::from_iter(vec![4])),
+            ]),
+            /*file_to_word_pos=*/ HashMap::new(),
+        );
+        let searcher = Searcher::new(&index);
+
+        assert_eq!(
+            searcher.search_word("boooooo"),
             vec![
-                ("boo".to_owned(), RoaringBitmap::from_iter(vec![3])),
-                ("foo".to_owned(), RoaringBitmap::from_iter(vec![1])),
-                ("foob".to_owned(), RoaringBitmap::from_iter(vec![2])),
+                ("boooooo".to_owned(), RoaringBitmap::from_iter(vec![2])),
+                ("booooor".to_owned(), RoaringBitmap::from_iter(vec![3])),
+                ("foooooo".to_owned(), RoaringBitmap::from_iter(vec![1])),
             ]
         );
     }

@@ -60,7 +60,7 @@ impl Indexer {
                 num_indexed_files += 1;
             }
 
-            if num_indexed_files > 1000 {
+            if num_indexed_files > 10000 {
                 break;
             }
         }
@@ -91,5 +91,75 @@ impl Indexer {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    fn append_test_dir_path(p: &str) -> String {
+        env::current_dir()
+            .unwrap()
+            .join(p)
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn test_indexing_directory() {
+        let mut indexer = Indexer::new(&append_test_dir_path("test_data/indexer"));
+        let index = indexer.index_directory();
+
+        let mut files_indexed = index.files.clone();
+        files_indexed.sort();
+
+        assert_eq!(
+            files_indexed,
+            vec![
+                append_test_dir_path("test_data/indexer/sub_dir/test3.js"),
+                append_test_dir_path("test_data/indexer/test1.js"),
+                append_test_dir_path("test_data/indexer/test2.js"),
+            ]
+        );
+
+        pretty_assertions::assert_eq!(
+            index.word_to_bitmap,
+            HashMap::from_iter(vec![
+                ("a".to_owned(), RoaringBitmap::from_iter(vec![0, 2])),
+                ("function".to_owned(), RoaringBitmap::from_iter(vec![0])),
+                ("export".to_owned(), RoaringBitmap::from_iter(vec![1, 2])),
+                ("3".to_owned(), RoaringBitmap::from_iter(vec![2])),
+                ("const".to_owned(), RoaringBitmap::from_iter(vec![2])),
+            ])
+        );
+
+        pretty_assertions::assert_eq!(
+            index.file_to_word_pos,
+            HashMap::from_iter(vec![
+                (
+                    0,
+                    HashMap::from_iter(vec![
+                        ("a".to_owned(), vec![(0, 9)]),
+                        ("function".to_owned(), vec![(0, 0)])
+                    ])
+                ),
+                (
+                    1,
+                    HashMap::from_iter(vec![("export".to_owned(), vec![(0, 0)]),])
+                ),
+                (
+                    2,
+                    HashMap::from_iter(vec![
+                        ("a".to_owned(), vec![(0, 13)]),
+                        ("export".to_owned(), vec![(0, 0)]),
+                        ("const".to_owned(), vec![(0, 7)]),
+                        ("3".to_owned(), vec![(0, 17)]),
+                    ])
+                )
+            ])
+        );
     }
 }

@@ -2,6 +2,7 @@ use fst::Set;
 use roaring::RoaringBitmap;
 use std::collections::HashMap;
 
+// fild id to (word, Vec(line, pos)).
 pub type FileToWordPos = HashMap<usize, HashMap<String, Vec<(usize, usize)>>>;
 
 pub struct Index {

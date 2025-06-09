@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::index::FileToWordPos;
 
+const MAX_LINE_TO_SHOW: usize = 80;
+
 pub struct SearchResult {
     pub words: Vec<String>,
 
@@ -108,6 +110,7 @@ impl SearchResultViewer {
                 line_num + 1,
                 highlight_line_by_positions(&lines[line_num], &pos)
             ));
+            output_lines.push(format!("pos: {:?}", pos));
 
             prev_line_num = Some(line_num)
         }
@@ -124,7 +127,7 @@ fn highlight_line_by_positions(line: &str, positions: &[(&str, usize)]) -> Strin
         let (word, start) = pos;
 
         if current < *start {
-            result.push_str(&line[current..*start]);
+            result.push_str(&truncate_long_line(line));
         }
 
         result.push_str(&word.to_string().red().to_string());
@@ -133,8 +136,28 @@ fn highlight_line_by_positions(line: &str, positions: &[(&str, usize)]) -> Strin
     }
 
     if current < line.len() {
-        result.push_str(&line[current..]);
+        result.push_str(&truncate_long_line(&line[current..]));
     }
 
     result
+}
+
+fn truncate_long_line(line: &str) -> String {
+    if line.len() < MAX_LINE_TO_SHOW {
+        return line.to_owned();
+    }
+
+    format!(
+        "{} ... {}",
+        &line[0..40],
+        &line[line.len() - 40..line.len()]
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn show_search_result() {}
 }
