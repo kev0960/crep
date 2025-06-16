@@ -85,26 +85,25 @@ impl<'i> Searcher<'i> {
     }
 
     fn search_word(&self, word: &str) -> Vec<(String, RoaringBitmap)> {
-        let matched_words = match word.len() {
-            1..=5 => {
-                let matcher = Str::new(word);
-                self.index
-                    .words
-                    .search(matcher)
-                    .into_stream()
-                    .into_strs()
-                    .unwrap()
-            }
-            _ => {
-                let lev = Levenshtein::new(word, 1).unwrap();
-                self.index
-                    .words
-                    .search(lev)
-                    .into_stream()
-                    .into_strs()
-                    .unwrap()
-            }
-        };
+        let matcher = Str::new(word);
+        let mut matched_words = self
+            .index
+            .words
+            .search(matcher)
+            .into_stream()
+            .into_strs()
+            .unwrap();
+
+        if matched_words.is_empty() {
+            let lev = Levenshtein::new(word, 1).unwrap();
+            matched_words = self
+                .index
+                .words
+                .search(lev)
+                .into_stream()
+                .into_strs()
+                .unwrap();
+        }
 
         // Now find the files that contains the matched words.
 
@@ -283,11 +282,10 @@ mod tests {
         let searcher = Searcher::new(&index);
 
         assert_eq!(
-            searcher.search_word("boooooo"),
+            searcher.search_word("boooook"),
             vec![
                 ("boooooo".to_owned(), RoaringBitmap::from_iter(vec![2])),
                 ("booooor".to_owned(), RoaringBitmap::from_iter(vec![3])),
-                ("foooooo".to_owned(), RoaringBitmap::from_iter(vec![1])),
             ]
         );
     }

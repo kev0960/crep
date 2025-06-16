@@ -76,15 +76,16 @@ impl Indexer {
     ) -> Result<(), std::io::Error> {
         let content = std::fs::read_to_string(path)?;
 
-        let (all_words, word_pos_map) = Tokenizer::split_to_words(&content);
-        for word in all_words {
+        let tokenizer_result = Tokenizer::split_to_words(&content);
+        for word in tokenizer_result.total_words {
             let bitmap = word_to_bitmap.entry(word.to_string()).or_default();
             bitmap.insert(file_id as u32);
         }
 
         file_to_word_pos.insert(
             file_id as usize,
-            word_pos_map
+            tokenizer_result
+                .word_pos
                 .into_iter()
                 .map(|(word, positions)| (word.to_string(), positions))
                 .collect(),

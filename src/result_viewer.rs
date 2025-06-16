@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::index::FileToWordPos;
 
-const MAX_LINE_TO_SHOW: usize = 80;
+const MAX_CHARS_TO_SHOW: usize = 80;
 
 pub struct SearchResult {
     pub words: Vec<String>,
@@ -110,7 +110,6 @@ impl SearchResultViewer {
                 line_num + 1,
                 highlight_line_by_positions(&lines[line_num], &pos)
             ));
-            output_lines.push(format!("pos: {:?}", pos));
 
             prev_line_num = Some(line_num)
         }
@@ -127,7 +126,7 @@ fn highlight_line_by_positions(line: &str, positions: &[(&str, usize)]) -> Strin
         let (word, start) = pos;
 
         if current < *start {
-            result.push_str(&truncate_long_line(line));
+            result.push_str(&truncate_long_line(&line[current..*start]));
         }
 
         result.push_str(&word.to_string().red().to_string());
@@ -143,15 +142,34 @@ fn highlight_line_by_positions(line: &str, positions: &[(&str, usize)]) -> Strin
 }
 
 fn truncate_long_line(line: &str) -> String {
-    if line.len() < MAX_LINE_TO_SHOW {
+    if line.len() < MAX_CHARS_TO_SHOW {
         return line.to_owned();
     }
 
     format!(
         "{} ... {}",
-        &line[0..40],
-        &line[line.len() - 40..line.len()]
+        get_first_n_chars(line, MAX_CHARS_TO_SHOW / 2),
+        get_last_n_chars(line, MAX_CHARS_TO_SHOW / 2)
     )
+}
+
+fn get_first_n_chars(line: &str, n: usize) -> &str {
+    let end_byte_index = line
+        .char_indices()
+        .nth(n)
+        .map_or(line.len(), |(idx, _)| idx);
+
+    &line[0..end_byte_index]
+}
+
+fn get_last_n_chars(line: &str, n: usize) -> &str {
+    let start_byte_index = line
+        .char_indices()
+        .rev()
+        .nth(n.saturating_sub(1))
+        .map_or(0, |(idx, _)| idx);
+
+    &line[start_byte_index..]
 }
 
 #[cfg(test)]
@@ -159,5 +177,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn show_search_result() {}
+    fn test_highlight_line_position() {
+        assert_eq!(
+            highlight_line_by_positions("this is a line", &[("is", 5)]),
+            format!("this {} a line", "is".to_string().red())
+        );
+    }
+
+    #[test]
+    fn test_get_first_n_chars() {
+        assert_eq!(get_first_n_chars("", 3), "");
+        assert_eq!(get_first_n_chars("a", 3), "a");
+        assert_eq!(get_first_n_chars("ab", 3), "ab");
+        assert_eq!(get_first_n_chars("abc", 3), "abc");
+        assert_eq!(get_first_n_chars("abcd", 3), "abc");
+
+        assert_eq!(get_first_n_chars("가", 0), "");
+        assert_eq!(get_first_n_chars("가나a다", 1), "가");
+        assert_eq!(get_first_n_chars("가나a다", 2), "가나");
+        assert_eq!(get_first_n_chars("가나a다", 3), "가나a");
+        assert_eq!(get_first_n_chars("가나a다", 4), "가나a다");
+    }
+
+    #[test]
+    fn test_get_last_n_chars() {
+        assert_eq!(get_last_n_chars("", 3), "");
+        assert_eq!(get_last_n_chars("a", 3), "a");
+        assert_eq!(get_last_n_chars("ab", 3), "ab");
+        assert_eq!(get_last_n_chars("abc", 3), "abc");
+        assert_eq!(get_last_n_chars("abcd", 3), "bcd");
+
+        assert_eq!(get_last_n_chars("가", 1), "가");
+        assert_eq!(get_last_n_chars("가a나", 2), "a나");
+        assert_eq!(get_last_n_chars("가a나", 3), "가a나");
+    }
 }
