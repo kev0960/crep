@@ -1,25 +1,37 @@
+use indicatif::{ProgressBar, ProgressStyle};
 use roaring::RoaringBitmap;
 use std::{collections::HashMap, path::Path};
 use walkdir::WalkDir;
 
 use crate::{
+    git_indexer::GitIndexer,
     index::{FileToWordPos, Index},
     tokenizer::Tokenizer,
 };
 
 pub struct Indexer {
-    git_root: String,
+    root_dir: String,
 }
 
 impl Indexer {
-    pub fn new(git_root: &str) -> Self {
+    pub fn new(root_dir: &str) -> Self {
         Indexer {
-            git_root: git_root.to_string(),
+            root_dir: root_dir.to_string(),
         }
     }
 
-    pub fn index_directory(&mut self) -> Index {
-        let path = Path::new(&self.git_root);
+    pub fn index(&self) {
+        match git2::Repository::open(Path::new(&self.root_dir)) {
+            Ok(repo) => GitIndexer::new(repo).index_history().unwrap(),
+            Err(_) => {
+                println!("Non Git-directory. Only indexing the current directory.");
+                self.index_directory();
+            }
+        }
+    }
+
+    pub fn index_directory(&self) -> Index {
+        let path = Path::new(&self.root_dir);
 
         let mut num_indexed_files: i64 = 0;
 
@@ -27,6 +39,11 @@ impl Indexer {
 
         let mut word_to_bitmap: HashMap<String, RoaringBitmap> = HashMap::new();
         let mut file_to_word_pos: FileToWordPos = HashMap::new();
+
+        let bar = ProgressBar::new(10000);
+        bar.set_style(ProgressStyle::default_bar().template(
+            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>7}/{len:7} {msg}",
+        ).unwrap());
 
         for entry in WalkDir::new(path)
             .into_iter()
@@ -45,6 +62,8 @@ impl Indexer {
             .filter_map(Result::ok)
         {
             if entry.file_type().is_file() {
+                bar.set_message(entry.path().to_str().unwrap().to_owned());
+
                 if Indexer::index_file(
                     &mut word_to_bitmap,
                     &mut file_to_word_pos,
@@ -58,12 +77,16 @@ impl Indexer {
 
                 files.push(entry.path().to_string_lossy().to_string());
                 num_indexed_files += 1;
+
+                bar.inc(1);
             }
 
             if num_indexed_files > 10000 {
                 break;
             }
         }
+
+        bar.finish();
 
         Index::new(files, word_to_bitmap, file_to_word_pos)
     }

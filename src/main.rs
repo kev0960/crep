@@ -4,6 +4,8 @@ use indexer::Indexer;
 use result_viewer::SearchResultViewer;
 use searcher::Searcher;
 
+mod git;
+mod git_indexer;
 mod index;
 mod indexer;
 mod result_viewer;
@@ -11,30 +13,35 @@ mod searcher;
 mod tokenizer;
 
 fn main() {
-    let mut indexer = Indexer::new("/home/jaebum/Halfmore");
-    let index = indexer.index_directory();
+    let indexer = Indexer::new("/home/jaebum/learn/search");
+    indexer.index();
 
-    let searcher = Searcher::new(&index);
+    /*
+        let indexer = Indexer::new("/home/jaebum/Halfmore");
+        let index = indexer.index_directory();
 
-    let mut result_viewer = SearchResultViewer::new();
+        let searcher = Searcher::new(&index);
 
-    loop {
-        print!("Query :: ");
-        io::stdout().flush().unwrap();
+        let mut result_viewer = SearchResultViewer::new();
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
+        loop {
+            print!("Query :: ");
+            io::stdout().flush().unwrap();
 
-        let input = input.trim();
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).unwrap();
 
-        if input.is_empty() {
-            break;
+            let input = input.trim();
+
+            if input.is_empty() {
+                break;
+            }
+
+            let results = searcher.search(input);
+            println!(
+                "{}",
+                result_viewer.show_results(&results, &index.file_to_word_pos)
+            );
         }
-
-        let results = searcher.search(input);
-        println!(
-            "{}",
-            result_viewer.show_results(&results, &index.file_to_word_pos)
-        );
-    }
+    */
 }
