@@ -22,7 +22,7 @@ impl Indexer {
 
     pub fn index(&self) {
         match git2::Repository::open(Path::new(&self.root_dir)) {
-            Ok(repo) => GitIndexer::new(repo).index_history().unwrap(),
+            Ok(repo) => GitIndexer::new().index_history(repo).unwrap(),
             Err(_) => {
                 println!("Non Git-directory. Only indexing the current directory.");
                 self.index_directory();
