@@ -281,6 +281,9 @@ impl GitIndexer {
                     }
 
                     if hunk.prev_line_count > 0 {
+                        // Delete line number "includes" the deleted line.
+                        // Hence we have to deduct 1 since the indexes are zero
+                        // based while Hunk is one based.
                         diff_tracker.delete_lines(
                             hunk.prev_line_start_num as usize - 1,
                             hunk.prev_line_count as usize,
@@ -292,6 +295,9 @@ impl GitIndexer {
                             *commit_id,
                         );
                     } else {
+                        // If the "delete" is not happening, then it means only
+                        // new line is added. Since the line is added "after"
+                        // the 1-based line number, we do not need to deduct 1.
                         diff_tracker.add_lines(
                             hunk.prev_line_start_num as usize,
                             hunk.new_line_count as usize,
