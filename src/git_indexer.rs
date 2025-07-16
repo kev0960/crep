@@ -281,9 +281,13 @@ impl GitIndexer {
                     }
 
                     if hunk.prev_line_count > 0 {
-                        // Delete line number "includes" the deleted line.
+                        // Hunk uses 1-based line number and the deleted line
+                        // number "includes" the deleted line. E.g. if
+                        // prev_line_start_num is 1, then it means the first
+                        // line is removed.
+                        //
                         // Hence we have to deduct 1 since the indexes are zero
-                        // based while Hunk is one based.
+                        // based.
                         diff_tracker.delete_lines(
                             hunk.prev_line_start_num as usize - 1,
                             hunk.prev_line_count as usize,
