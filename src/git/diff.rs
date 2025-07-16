@@ -213,6 +213,29 @@ mod tests {
     }
 
     #[test]
+    fn test_add_lines_simple() {
+        let mut tracker = FileDiffTracker {
+            commit_line_end: vec![36],
+            commit_indexes: vec![0],
+        };
+
+        tracker.delete_lines(12, 1);
+        tracker.add_lines(12, 1, 1);
+        assert_eq!(tracker, FileDiffTracker {
+                commit_line_end: vec![12, 13, 36],
+                commit_indexes: vec![0, 1, 0],
+            }
+        );
+
+        tracker.add_lines(10, 1, 1);
+        assert_eq!(tracker, FileDiffTracker {
+                commit_line_end: vec![10, 11, 13, 14, 37],
+                commit_indexes: vec![0, 1, 0, 1, 0],
+            }
+        );
+    }
+
+    #[test]
     fn test_delete_lines() {
         let mut tracker = FileDiffTracker {
             commit_line_end: vec![3, 8, 11, 13, 14, 24, 29, 36, 41],

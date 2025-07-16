@@ -16,6 +16,7 @@ pub struct GitIndexer {
     commit_index_to_commit_id: Vec<[u8; 20]>,
     commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
     file_name_to_id: HashMap<String, FileId>,
+    file_id_to_name: Vec<String>,
     file_id_to_diff_tracker: HashMap<FileId, FileDiffTracker>,
 }
 
@@ -31,6 +32,7 @@ impl GitIndexer {
             commit_index_to_commit_id: Vec::new(),
             commit_id_to_commit_index: HashMap::new(),
             file_name_to_id: HashMap::new(),
+            file_id_to_name: Vec::new(),
             file_id_to_diff_tracker: HashMap::new(),
         }
     }
@@ -42,6 +44,7 @@ impl GitIndexer {
                 let file_id = self.file_name_to_id.len();
                 self.file_name_to_id
                     .insert(file_full_path.to_owned(), file_id);
+                self.file_id_to_name.push(file_full_path.to_owned());
                 file_id
             }
         }
@@ -82,20 +85,14 @@ impl GitIndexer {
                 last_tree = Some(tree);
                 self.index_tree(&0, last_tree.as_ref().unwrap(), &repo)?;
             }
-        }
 
-        let file_id_to_name = self
-            .file_name_to_id
-            .iter()
-            .map(|(k, v)| (*v, k))
-            .collect::<HashMap<_, _>>();
-
-        for (file_id, diff_tracker) in self.file_id_to_diff_tracker.iter() {
-            println!(
-                "File name: {:?} {:?}",
-                file_id_to_name.get(file_id),
-                diff_tracker
-            );
+            for (file_id, diff_tracker) in self.file_id_to_diff_tracker.iter() {
+                println!(
+                    "File name: {:?} {:?}",
+                    self.file_id_to_name.get(*file_id),
+                    diff_tracker
+                );
+            }
         }
 
         Ok(())
@@ -126,7 +123,6 @@ impl GitIndexer {
                 let mut current_diff_file = current_diff_file.borrow_mut();
 
                 if !file_delta.is_empty() {
-                    println!("{:?}", file_delta);
                     self.index_git_delta(&current_diff_file, &file_delta, commit_id)
                         .unwrap();
                     file_delta.clear();
@@ -173,10 +169,6 @@ impl GitIndexer {
             },
             None,
             Some(&mut |_delta, hunk| {
-                if current_diff_file.borrow().as_ref().unwrap().status == Delta::Modified {
-                    println!("Hunk: {:?}", String::from_utf8_lossy(hunk.header()));
-                }
-
                 file_delta.borrow_mut().push(GitDelta {
                     prev_line_start_num: hunk.old_start(),
                     prev_line_count: hunk.old_lines(),
@@ -218,17 +210,8 @@ impl GitIndexer {
 
                     let content = std::str::from_utf8(blob.content()).unwrap();
                     let file_name = &format!("{}{}", root, name);
-                    println!("FILE NAME {}", file_name);
 
-                    let file_id = match self.file_name_to_id.get(file_name) {
-                        Some(id) => *id,
-                        None => {
-                            let file_id = self.file_name_to_id.len();
-                            self.file_name_to_id.insert(file_name.to_owned(), file_id);
-                            file_id
-                        }
-                    };
-
+                    let file_id = self.get_file_id_insert_if_missing(file_name);
                     self.index_file(
                         commit_id,
                         file_id,
@@ -241,8 +224,6 @@ impl GitIndexer {
 
             TreeWalkResult::Ok
         })?;
-
-        println!("{:?}", self.file_id_to_diff_tracker);
 
         Ok(())
     }
@@ -299,18 +280,24 @@ impl GitIndexer {
                         assert!(hunk.prev_line_count == 0);
                     }
 
-                    if hunk.prev_line_start_num > 0 {
+                    if hunk.prev_line_count > 0 {
                         diff_tracker.delete_lines(
                             hunk.prev_line_start_num as usize - 1,
                             hunk.prev_line_count as usize,
                         );
-                    }
 
-                    diff_tracker.add_lines(
-                        hunk.prev_line_start_num as usize,
-                        hunk.new_line_count as usize,
-                        *commit_id,
-                    );
+                        diff_tracker.add_lines(
+                            hunk.prev_line_start_num as usize - 1,
+                            hunk.new_line_count as usize,
+                            *commit_id,
+                        );
+                    } else {
+                        diff_tracker.add_lines(
+                            hunk.prev_line_start_num as usize,
+                            hunk.new_line_count as usize,
+                            *commit_id,
+                        );
+                    }
                 }
             }
             Delta::Added => {
