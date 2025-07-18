@@ -271,7 +271,7 @@ impl GitIndexer {
             Delta::Modified => {
                 let diff_tracker = self.file_id_to_diff_tracker.get_mut(&file_id);
                 if diff_tracker.is_none() {
-                    return Err(format!(""));
+                    return Err("diff tracker is not found".to_owned());
                 }
 
                 let diff_tracker = diff_tracker.unwrap();
@@ -296,7 +296,7 @@ impl GitIndexer {
                         diff_tracker.add_lines(
                             hunk.prev_line_start_num as usize - 1,
                             hunk.new_line_count as usize,
-                            *commit_id,
+                            (*commit_id, (hunk.new_line_start_num - 1) as usize),
                         );
                     } else {
                         // If the "delete" is not happening, then it means only
@@ -305,7 +305,7 @@ impl GitIndexer {
                         diff_tracker.add_lines(
                             hunk.prev_line_start_num as usize,
                             hunk.new_line_count as usize,
-                            *commit_id,
+                            (*commit_id, (hunk.new_line_start_num - 1) as usize),
                         );
                     }
                 }

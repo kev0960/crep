@@ -2,20 +2,27 @@ use crate::git_indexer::CommitIndex;
 
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct FileDiffTracker {
-    // commit index to number of lines.
+    // the index that each line ends.
     commit_line_end: Vec<usize>,
-    commit_indexes: Vec<CommitIndex>,
+
+    // (commit_index, line_start_in_commit)
+    commit_indexes: Vec<(CommitIndex, usize)>,
 }
 
 impl FileDiffTracker {
     pub fn new(init_commit: CommitIndex, total_line: usize) -> Self {
         Self {
             commit_line_end: vec![total_line],
-            commit_indexes: vec![init_commit],
+            commit_indexes: vec![(init_commit, 0)],
         }
     }
 
-    pub fn add_lines(&mut self, insert_start: usize, num_added_lines: usize, commit: CommitIndex) {
+    pub fn add_lines(
+        &mut self,
+        insert_start: usize,
+        num_added_lines: usize,
+        commit: (CommitIndex, usize),
+    ) {
         if num_added_lines == 0 {
             return;
         }
@@ -113,7 +120,12 @@ impl FileDiffTracker {
         }
     }
 
-    pub fn update_lines(&mut self, start_line: usize, changed_lines: usize, commit: CommitIndex) {
+    pub fn update_lines(
+        &mut self,
+        start_line: usize,
+        changed_lines: usize,
+        commit: (CommitIndex, usize),
+    ) {
         self.delete_lines(start_line, changed_lines);
         self.add_lines(start_line, changed_lines, commit);
     }
@@ -147,7 +159,7 @@ mod tests {
     fn test_find_chunk_index_by_line_num() {
         let tracker = FileDiffTracker {
             commit_line_end: vec![5, 8, 14, 21],
-            commit_indexes: vec![1, 2, 1, 3],
+            commit_indexes: vec![(1, 0), (2, 5), (1, 5), (3, 10)],
         };
 
         assert_eq!(
@@ -172,42 +184,61 @@ mod tests {
     fn test_add_lines() {
         let mut tracker = FileDiffTracker {
             commit_line_end: vec![5, 8, 14, 21],
-            commit_indexes: vec![1, 2, 1, 3],
+            commit_indexes: vec![(1, 0), (2, 5), (1, 5), (3, 10)],
         };
 
-        tracker.add_lines(0, 3, 4);
+        tracker.add_lines(0, 3, (4, 9));
         assert_eq!(
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 8, 11, 17, 24],
-                commit_indexes: vec![4, 1, 2, 1, 3]
+                commit_indexes: vec![(4, 9), (1, 0), (2, 5), (1, 5), (3, 10)]
             }
         );
 
-        tracker.add_lines(11, 2, 5);
+        tracker.add_lines(11, 2, (5, 12));
         assert_eq!(
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 8, 11, 13, 19, 26],
-                commit_indexes: vec![4, 1, 2, 5, 1, 3]
+                commit_indexes: vec![(4, 9), (1, 0), (2, 5), (5, 12), (1, 5), (3, 10)]
             }
         );
 
-        tracker.add_lines(14, 10, 6);
+        tracker.add_lines(14, 10, (6, 15));
         assert_eq!(
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 8, 11, 13, 14, 24, 29, 36],
-                commit_indexes: vec![4, 1, 2, 5, 1, 6, 1, 3]
+                commit_indexes: vec![
+                    (4, 9),
+                    (1, 0),
+                    (2, 5),
+                    (5, 12),
+                    (1, 5),
+                    (6, 15),
+                    (1, 5),
+                    (3, 10)
+                ]
             }
         );
 
-        tracker.add_lines(36, 5, 7);
+        tracker.add_lines(36, 5, (7, 18));
         assert_eq!(
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 8, 11, 13, 14, 24, 29, 36, 41],
-                commit_indexes: vec![4, 1, 2, 5, 1, 6, 1, 3, 7]
+                commit_indexes: vec![
+                    (4, 9),
+                    (1, 0),
+                    (2, 5),
+                    (5, 12),
+                    (1, 5),
+                    (6, 15),
+                    (1, 5),
+                    (3, 10),
+                    (7, 18)
+                ]
             }
         )
     }
@@ -216,21 +247,25 @@ mod tests {
     fn test_add_lines_simple() {
         let mut tracker = FileDiffTracker {
             commit_line_end: vec![36],
-            commit_indexes: vec![0],
+            commit_indexes: vec![(0, 0)],
         };
 
         tracker.delete_lines(12, 1);
-        tracker.add_lines(12, 1, 1);
-        assert_eq!(tracker, FileDiffTracker {
+        tracker.add_lines(12, 1, (1, 1));
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
                 commit_line_end: vec![12, 13, 36],
-                commit_indexes: vec![0, 1, 0],
+                commit_indexes: vec![(0, 0), (1, 1), (0, 0)],
             }
         );
 
-        tracker.add_lines(10, 1, 1);
-        assert_eq!(tracker, FileDiffTracker {
+        tracker.add_lines(10, 1, (1, 2));
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
                 commit_line_end: vec![10, 11, 13, 14, 37],
-                commit_indexes: vec![0, 1, 0, 1, 0],
+                commit_indexes: vec![(0, 0), (1, 2), (0, 0), (1, 1), (0, 0)],
             }
         );
     }
@@ -239,7 +274,17 @@ mod tests {
     fn test_delete_lines() {
         let mut tracker = FileDiffTracker {
             commit_line_end: vec![3, 8, 11, 13, 14, 24, 29, 36, 41],
-            commit_indexes: vec![4, 1, 2, 5, 1, 6, 1, 3, 7],
+            commit_indexes: vec![
+                (4, 9),
+                (1, 0),
+                (2, 5),
+                (5, 10),
+                (1, 5),
+                (6, 10),
+                (1, 5),
+                (3, 10),
+                (7, 10),
+            ],
         };
 
         // Delete partially from single chunk.
@@ -249,7 +294,17 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 7, 10, 12, 13, 23, 28, 35, 40],
-                commit_indexes: vec![4, 1, 2, 5, 1, 6, 1, 3, 7],
+                commit_indexes: vec![
+                    (4, 9),
+                    (1, 0),
+                    (2, 5),
+                    (5, 10),
+                    (1, 5),
+                    (6, 10),
+                    (1, 5),
+                    (3, 10),
+                    (7, 10),
+                ],
             }
         );
 
@@ -260,7 +315,16 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 7, 9, 10, 20, 25, 32, 37],
-                commit_indexes: vec![4, 1, 5, 1, 6, 1, 3, 7],
+                commit_indexes: vec![
+                    (4, 9),
+                    (1, 0),
+                    (5, 10),
+                    (1, 5),
+                    (6, 10),
+                    (1, 5),
+                    (3, 10),
+                    (7, 10),
+                ],
             }
         );
 
@@ -270,7 +334,16 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 5, 6, 7, 17, 22, 29, 34],
-                commit_indexes: vec![4, 1, 5, 1, 6, 1, 3, 7],
+                commit_indexes: vec![
+                    (4, 9),
+                    (1, 0),
+                    (5, 10),
+                    (1, 5),
+                    (6, 10),
+                    (1, 5),
+                    (3, 10),
+                    (7, 10),
+                ],
             }
         );
 
@@ -280,7 +353,13 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 13, 18, 25, 30],
-                commit_indexes: vec![4, 6, 1, 3, 7],
+                commit_indexes: vec![
+                    (4, 9),
+                    (6, 10),
+                    (1, 5),
+                    (3, 10),
+                    (7, 10),
+                ],
             }
         );
 
@@ -290,7 +369,7 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 8, 15, 20],
-                commit_indexes: vec![6, 1, 3, 7],
+                commit_indexes: vec![(6, 10), (1, 5), (3, 10), (7, 10)],
             }
         );
 
@@ -300,7 +379,7 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 8, 14],
-                commit_indexes: vec![6, 1, 3],
+                commit_indexes: vec![(6, 10), (1, 5), (3, 10)],
             }
         );
 
@@ -326,7 +405,7 @@ mod tests {
         // Partially delete the delete start.
         let mut tracker = FileDiffTracker {
             commit_line_end: vec![3, 8, 11, 20],
-            commit_indexes: vec![4, 1, 2, 5],
+            commit_indexes: vec![(4, 9), (1, 0), (2, 5), (5, 10)],
         };
 
         tracker.delete_lines(1, 10);
@@ -334,7 +413,7 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![1, 10],
-                commit_indexes: vec![4, 5],
+                commit_indexes: vec![(4, 9), (5, 10)],
             }
         );
     }
@@ -343,7 +422,7 @@ mod tests {
     fn test_delete_lines_front() {
         let mut tracker = FileDiffTracker {
             commit_line_end: vec![20, 21, 25],
-            commit_indexes: vec![0, 1, 0],
+            commit_indexes: vec![(0, 0), (1, 1), (0, 0)],
         };
 
         tracker.delete_lines(16, 1);
@@ -351,13 +430,13 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![19, 20, 24],
-                commit_indexes: vec![0, 1, 0],
+                commit_indexes: vec![(0, 0), (1, 1), (0, 0)],
             }
         );
 
         let mut tracker = FileDiffTracker {
             commit_line_end: vec![20],
-            commit_indexes: vec![0],
+            commit_indexes: vec![(0, 0)],
         };
 
         tracker.delete_lines(16, 3);
@@ -365,7 +444,7 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![17],
-                commit_indexes: vec![0],
+                commit_indexes: vec![(0, 0)],
             }
         );
     }
@@ -374,15 +453,25 @@ mod tests {
     fn update_lines_test() {
         let mut tracker = FileDiffTracker {
             commit_line_end: vec![3, 8, 11, 13, 14, 24, 29, 36, 41],
-            commit_indexes: vec![4, 1, 2, 5, 1, 6, 1, 3, 7],
+            commit_indexes: vec![
+                (4, 9),
+                (1, 0),
+                (2, 5),
+                (5, 10),
+                (1, 5),
+                (6, 10),
+                (1, 5),
+                (3, 10),
+                (7, 10),
+            ],
         };
 
-        tracker.update_lines(6, 10, 8);
+        tracker.update_lines(6, 10, (8, 10));
         assert_eq!(
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 6, 16, 24, 29, 36, 41],
-                commit_indexes: vec![4, 1, 8, 6, 1, 3, 7]
+                commit_indexes: vec![(4, 9), (1, 0), (8, 10), (6, 10), (1, 5), (3, 10), (7, 10)],
             }
         );
     }
