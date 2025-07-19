@@ -1,5 +1,3 @@
-use core::num;
-
 use crate::git_indexer::CommitIndex;
 
 #[derive(Debug, PartialEq, Eq, Default)]
