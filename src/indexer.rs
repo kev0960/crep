@@ -1,4 +1,5 @@
 use indicatif::{ProgressBar, ProgressStyle};
+use owo_colors::OwoColorize;
 use roaring::RoaringBitmap;
 use std::{collections::HashMap, path::Path};
 use walkdir::WalkDir;

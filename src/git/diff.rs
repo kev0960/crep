@@ -1,3 +1,5 @@
+use core::num;
+
 use crate::git_indexer::CommitIndex;
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -7,6 +9,14 @@ pub struct FileDiffTracker {
 
     // (commit_index, line_start_in_commit)
     commit_indexes: Vec<(CommitIndex, usize)>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct LineDeleteResult {
+    pub commit_id: CommitIndex,
+
+    // [start, end)
+    pub start_and_end: (usize, usize),
 }
 
 impl FileDiffTracker {
@@ -65,19 +75,125 @@ impl FileDiffTracker {
 
             self.commit_indexes.splice(
                 (chunk_index + 1)..(chunk_index + 1),
-                vec![commit, self.commit_indexes[chunk_index]],
+                vec![
+                    commit,
+                    (
+                        self.commit_indexes[chunk_index].0,
+                        // New commit start index is shifted by the (insert_start - chunk_start)
+                        self.commit_indexes[chunk_index].1 + (insert_start - chunk_start),
+                    ),
+                ],
             );
         }
     }
 
-    pub fn delete_lines(&mut self, delete_start: usize, num_deleted_lines: usize) {
+    // There are 4 possible cases when deleting the commit chunk.
+    //
+    // Case 1. Right end of the start chunk and left end of the last chunk gets removed.
+    //
+    //        |   chunk start  |  chunk last |
+    //             |x-----delete-----x|
+    //                                ^
+    //                     should be the new line start
+    //
+    // In this case,
+    //   - line_start_in_commit of chunk start remains the same.
+    //   - line_start_in_commit of the chunk last should be updated
+    //
+    // Case 2. Middle of the chunk gets removed.
+    //
+    //          |                     chunk                 |
+    //                       |x-----delete-----x|
+    //
+    // In this case, line_start_in_commit is no longer continuous. Thus it will create two chunks.
+    //
+    //          | chunk old |                   | chunk new |
+    //                                          ^
+    //                                    new line start
+    //
+    //
+    // Case 3. Only the right end of the last chunk is removed
+    //
+    //          |          chunk             |
+    //                    |x-----delete-----x|
+    //
+    //  -- This case, even if the chunk is the "chunk last", we shouldn't change the line start in
+    //     commit.
+    //
+    pub fn delete_lines(
+        &mut self,
+        delete_start: usize,
+        num_deleted_lines: usize,
+    ) -> Vec<LineDeleteResult> {
         if num_deleted_lines == 0 {
-            return;
+            return vec![];
         }
 
+        // Both indices are inclusive.
         let delete_start_index = self.find_chunk_index_by_line_num(delete_start);
         let delete_end_index =
             self.find_chunk_index_by_line_num(delete_start + num_deleted_lines - 1);
+
+        if delete_start_index == delete_end_index {
+            let chunk_start = self.get_chunk_start(delete_start_index);
+
+            // Handles case #2. This is the only case where the splitting the chunk is needed.
+            if chunk_start < delete_start
+                && delete_start + num_deleted_lines < self.commit_line_end[delete_start_index]
+            {
+                let (commit_index, line_start) = self.commit_indexes[delete_start_index];
+                self.commit_indexes.insert(
+                    delete_start_index + 1,
+                    (
+                        commit_index,
+                        line_start + delete_start + num_deleted_lines - chunk_start,
+                    ),
+                );
+                self.commit_line_end
+                    .insert(delete_start_index, delete_start);
+
+                // Now reduce the end inde by num deleted lines.
+                for line in &mut self.commit_line_end[delete_start_index + 1..] {
+                    *line = line.saturating_sub(num_deleted_lines);
+                }
+
+                let delete_start_pos_within_commit = line_start + delete_start - chunk_start;
+                return vec![LineDeleteResult {
+                    commit_id: commit_index,
+                    start_and_end: (
+                        delete_start_pos_within_commit,
+                        delete_start_pos_within_commit + num_deleted_lines,
+                    ),
+                }];
+            }
+        }
+
+        let mut line_delete_result: Vec<LineDeleteResult> =
+            Vec::with_capacity(delete_end_index - delete_start_index + 1);
+
+        for i in delete_start_index..(delete_end_index + 1) {
+            let chunk_start = self.get_chunk_start(i);
+
+            let delete_start_offset_within_chunk = match chunk_start < delete_start {
+                true => delete_start - chunk_start,
+                false => 0,
+            };
+
+            let delete_end_offset_within_chunk =
+                match self.commit_line_end[i] < delete_start + num_deleted_lines {
+                    true => self.commit_line_end[i] - chunk_start,
+                    false => delete_start + num_deleted_lines - chunk_start,
+                };
+
+            let (commit_id, line_end) = self.commit_indexes[i];
+            line_delete_result.push(LineDeleteResult {
+                commit_id,
+                start_and_end: (
+                    line_end + delete_start_offset_within_chunk,
+                    line_end + delete_end_offset_within_chunk,
+                ),
+            })
+        }
 
         // Need to find the chunk_start to delete completely.
         let should_delete_start = ((self.commit_line_end[delete_start_index]
@@ -97,6 +213,14 @@ impl FileDiffTracker {
             true => delete_end_index,
             false => delete_end_index.saturating_sub(1),
         };
+
+        let last_chunk_start = self.get_chunk_start(delete_end_index);
+
+        // Case #3.
+        if last_chunk_start >= delete_start {
+            self.commit_indexes[delete_end_index].1 +=
+                delete_start + num_deleted_lines - last_chunk_start;
+        }
 
         let num_line_to_delete_from_start = std::cmp::min(
             self.commit_line_end[delete_start_index],
@@ -118,16 +242,8 @@ impl FileDiffTracker {
             self.commit_indexes
                 .drain(purge_start_index..purge_end_index + 1);
         }
-    }
 
-    pub fn update_lines(
-        &mut self,
-        start_line: usize,
-        changed_lines: usize,
-        commit: (CommitIndex, usize),
-    ) {
-        self.delete_lines(start_line, changed_lines);
-        self.add_lines(start_line, changed_lines, commit);
+        line_delete_result
     }
 
     fn find_chunk_index_by_line_num(&self, line_num: usize) -> usize {
@@ -181,95 +297,328 @@ mod tests {
     }
 
     #[test]
-    fn test_add_lines() {
-        let mut tracker = FileDiffTracker {
-            commit_line_end: vec![5, 8, 14, 21],
-            commit_indexes: vec![(1, 0), (2, 5), (1, 5), (3, 10)],
-        };
-
-        tracker.add_lines(0, 3, (4, 9));
-        assert_eq!(
-            tracker,
-            FileDiffTracker {
-                commit_line_end: vec![3, 8, 11, 17, 24],
-                commit_indexes: vec![(4, 9), (1, 0), (2, 5), (1, 5), (3, 10)]
-            }
-        );
-
-        tracker.add_lines(11, 2, (5, 12));
-        assert_eq!(
-            tracker,
-            FileDiffTracker {
-                commit_line_end: vec![3, 8, 11, 13, 19, 26],
-                commit_indexes: vec![(4, 9), (1, 0), (2, 5), (5, 12), (1, 5), (3, 10)]
-            }
-        );
-
-        tracker.add_lines(14, 10, (6, 15));
-        assert_eq!(
-            tracker,
-            FileDiffTracker {
-                commit_line_end: vec![3, 8, 11, 13, 14, 24, 29, 36],
-                commit_indexes: vec![
-                    (4, 9),
-                    (1, 0),
-                    (2, 5),
-                    (5, 12),
-                    (1, 5),
-                    (6, 15),
-                    (1, 5),
-                    (3, 10)
-                ]
-            }
-        );
-
-        tracker.add_lines(36, 5, (7, 18));
-        assert_eq!(
-            tracker,
-            FileDiffTracker {
-                commit_line_end: vec![3, 8, 11, 13, 14, 24, 29, 36, 41],
-                commit_indexes: vec![
-                    (4, 9),
-                    (1, 0),
-                    (2, 5),
-                    (5, 12),
-                    (1, 5),
-                    (6, 15),
-                    (1, 5),
-                    (3, 10),
-                    (7, 18)
-                ]
-            }
-        )
-    }
-
-    #[test]
-    fn test_add_lines_simple() {
+    fn test_add_lines_front() {
         let mut tracker = FileDiffTracker {
             commit_line_end: vec![36],
             commit_indexes: vec![(0, 0)],
         };
 
-        tracker.delete_lines(12, 1);
-        tracker.add_lines(12, 1, (1, 1));
+        tracker.add_lines(12, 1, (1, 13));
         assert_eq!(
             tracker,
             FileDiffTracker {
-                commit_line_end: vec![12, 13, 36],
-                commit_indexes: vec![(0, 0), (1, 1), (0, 0)],
+                commit_line_end: vec![12, 13, 37],
+                commit_indexes: vec![(0, 0), (1, 13), (0, 12)],
             }
         );
 
-        tracker.add_lines(10, 1, (1, 2));
+        tracker.add_lines(10, 1, (2, 10));
         assert_eq!(
             tracker,
             FileDiffTracker {
-                commit_line_end: vec![10, 11, 13, 14, 37],
-                commit_indexes: vec![(0, 0), (1, 2), (0, 0), (1, 1), (0, 0)],
+                commit_line_end: vec![10, 11, 13, 14, 38],
+                commit_indexes: vec![(0, 0), (2, 10), (0, 10), (1, 13), (0, 12)],
+            }
+        );
+
+        // Add a new line at the front.
+        tracker.add_lines(0, 5, (3, 0));
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![5, 15, 16, 18, 19, 43],
+                commit_indexes: vec![(3, 0), (0, 0), (2, 10), (0, 10), (1, 13), (0, 12)],
             }
         );
     }
 
+    #[test]
+    fn test_add_lines_at_end() {
+        let mut tracker = FileDiffTracker {
+            commit_line_end: vec![36],
+            commit_indexes: vec![(0, 0)],
+        };
+
+        tracker.add_lines(36, 5, (1, 36));
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![36, 41],
+                commit_indexes: vec![(0, 0), (1, 36)],
+            }
+        );
+
+        // Add at the middle of the last element.
+        tracker.add_lines(38, 2, (2, 38));
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![36, 38, 40, 43],
+                commit_indexes: vec![(0, 0), (1, 36), (2, 38), (1, 38)],
+            }
+        );
+
+        // Add at the middle element.
+        tracker.add_lines(39, 5, (3, 39));
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![36, 38, 39, 44, 45, 48],
+                commit_indexes: vec![(0, 0), (1, 36), (2, 38), (3, 39), (2, 39), (1, 38)],
+            }
+        );
+    }
+
+    #[test]
+    fn test_delete_lines_front() {
+        let mut tracker = FileDiffTracker {
+            commit_line_end: vec![36, 38, 39, 44, 45, 48],
+            commit_indexes: vec![(0, 0), (1, 36), (2, 38), (3, 39), (2, 39), (1, 38)],
+        };
+
+        assert_eq!(
+            tracker.delete_lines(0, 10),
+            vec![LineDeleteResult {
+                commit_id: 0,
+                start_and_end: (0, 10)
+            }]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![26, 28, 29, 34, 35, 38],
+                commit_indexes: vec![(0, 10), (1, 36), (2, 38), (3, 39), (2, 39), (1, 38)]
+            }
+        );
+
+        // Delete the middle of the first chunk.
+        assert_eq!(
+            tracker.delete_lines(5, 10),
+            vec![LineDeleteResult {
+                commit_id: 0,
+                start_and_end: (15, 25)
+            }]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![5, 16, 18, 19, 24, 25, 28],
+                commit_indexes: vec![
+                    (0, 10),
+                    (0, 25),
+                    (1, 36),
+                    (2, 38),
+                    (3, 39),
+                    (2, 39),
+                    (1, 38)
+                ]
+            }
+        );
+
+        // Delete the entire first chunk.
+        assert_eq!(
+            tracker.delete_lines(0, 5),
+            vec![LineDeleteResult {
+                commit_id: 0,
+                start_and_end: (10, 15)
+            }]
+        );
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![11, 13, 14, 19, 20, 23],
+                commit_indexes: vec![(0, 25), (1, 36), (2, 38), (3, 39), (2, 39), (1, 38)]
+            }
+        );
+    }
+
+    #[test]
+    fn test_delete_lines_middle() {
+        let mut tracker = FileDiffTracker {
+            commit_line_end: vec![36, 38, 39, 44, 45, 48],
+            commit_indexes: vec![(0, 0), (1, 36), (2, 38), (3, 39), (2, 39), (1, 38)],
+        };
+
+        assert_eq!(
+            tracker.delete_lines(41, 6),
+            vec![
+                LineDeleteResult {
+                    commit_id: 3,
+                    start_and_end: (41, 44)
+                },
+                LineDeleteResult {
+                    commit_id: 2,
+                    start_and_end: (39, 40)
+                },
+                LineDeleteResult {
+                    commit_id: 1,
+                    start_and_end: (38, 40)
+                }
+            ]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![36, 38, 39, 41, 42],
+                commit_indexes: vec![(0, 0), (1, 36), (2, 38), (3, 39), (1, 40)]
+            }
+        );
+
+        assert_eq!(
+            tracker.delete_lines(20, 18),
+            vec![
+                LineDeleteResult {
+                    commit_id: 0,
+                    start_and_end: (20, 36)
+                },
+                LineDeleteResult {
+                    commit_id: 1,
+                    start_and_end: (36, 38)
+                }
+            ]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![20, 21, 23, 24],
+                commit_indexes: vec![(0, 0), (2, 38), (3, 39), (1, 40)]
+            }
+        );
+
+        assert_eq!(
+            tracker.delete_lines(20, 3),
+            vec![
+                LineDeleteResult {
+                    commit_id: 2,
+                    start_and_end: (38, 39)
+                },
+                LineDeleteResult {
+                    commit_id: 3,
+                    start_and_end: (39, 41)
+                }
+            ]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![20, 21],
+                commit_indexes: vec![(0, 0), (1, 40)]
+            }
+        );
+
+        assert_eq!(
+            tracker.delete_lines(0, 21),
+            vec![
+                LineDeleteResult {
+                    commit_id: 0,
+                    start_and_end: (0, 20)
+                },
+                LineDeleteResult {
+                    commit_id: 1,
+                    start_and_end: (40, 41)
+                }
+            ]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![],
+                commit_indexes: vec![]
+            }
+        );
+
+        // Case #1 for the middle element.
+        let mut tracker = FileDiffTracker {
+            commit_line_end: vec![36, 38, 39, 44, 45, 48],
+            commit_indexes: vec![(0, 0), (1, 36), (2, 38), (3, 39), (2, 39), (1, 38)],
+        };
+
+        assert_eq!(
+            tracker.delete_lines(40, 2),
+            vec![LineDeleteResult {
+                commit_id: 3,
+                start_and_end: (40, 42)
+            },]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![36, 38, 39, 40, 42, 43, 46],
+                commit_indexes: vec![(0, 0), (1, 36), (2, 38), (3, 39), (3, 42), (2, 39), (1, 38)]
+            }
+        );
+    }
+
+    #[test]
+    fn test_delete_lines_at_end() {
+        let mut tracker = FileDiffTracker {
+            commit_line_end: vec![36, 38, 39, 44, 45, 48],
+            commit_indexes: vec![(0, 0), (1, 36), (2, 38), (3, 39), (2, 39), (1, 38)],
+        };
+
+        assert_eq!(
+            tracker.delete_lines(46, 2),
+            vec![LineDeleteResult {
+                commit_id: 1,
+                start_and_end: (39, 41)
+            },]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![36, 38, 39, 44, 45, 46],
+                commit_indexes: vec![(0, 0), (1, 36), (2, 38), (3, 39), (2, 39), (1, 38)]
+            }
+        );
+
+        assert_eq!(
+            tracker.delete_lines(45, 1),
+            vec![LineDeleteResult {
+                commit_id: 1,
+                start_and_end: (38, 39)
+            },]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![36, 38, 39, 44, 45],
+                commit_indexes: vec![(0, 0), (1, 36), (2, 38), (3, 39), (2, 39)]
+            }
+        );
+
+        assert_eq!(
+            tracker.delete_lines(39, 6),
+            vec![
+                LineDeleteResult {
+                    commit_id: 3,
+                    start_and_end: (39, 44)
+                },
+                LineDeleteResult {
+                    commit_id: 2,
+                    start_and_end: (39, 40)
+                },
+            ]
+        );
+
+        assert_eq!(
+            tracker,
+            FileDiffTracker {
+                commit_line_end: vec![36, 38, 39],
+                commit_indexes: vec![(0, 0), (1, 36), (2, 38)]
+            }
+        );
+    }
+
+    /*
     #[test]
     fn test_delete_lines() {
         let mut tracker = FileDiffTracker {
@@ -353,13 +702,7 @@ mod tests {
             tracker,
             FileDiffTracker {
                 commit_line_end: vec![3, 13, 18, 25, 30],
-                commit_indexes: vec![
-                    (4, 9),
-                    (6, 10),
-                    (1, 5),
-                    (3, 10),
-                    (7, 10),
-                ],
+                commit_indexes: vec![(4, 9), (6, 10), (1, 5), (3, 10), (7, 10),],
             }
         );
 
@@ -417,62 +760,5 @@ mod tests {
             }
         );
     }
-
-    #[test]
-    fn test_delete_lines_front() {
-        let mut tracker = FileDiffTracker {
-            commit_line_end: vec![20, 21, 25],
-            commit_indexes: vec![(0, 0), (1, 1), (0, 0)],
-        };
-
-        tracker.delete_lines(16, 1);
-        assert_eq!(
-            tracker,
-            FileDiffTracker {
-                commit_line_end: vec![19, 20, 24],
-                commit_indexes: vec![(0, 0), (1, 1), (0, 0)],
-            }
-        );
-
-        let mut tracker = FileDiffTracker {
-            commit_line_end: vec![20],
-            commit_indexes: vec![(0, 0)],
-        };
-
-        tracker.delete_lines(16, 3);
-        assert_eq!(
-            tracker,
-            FileDiffTracker {
-                commit_line_end: vec![17],
-                commit_indexes: vec![(0, 0)],
-            }
-        );
-    }
-
-    #[test]
-    fn update_lines_test() {
-        let mut tracker = FileDiffTracker {
-            commit_line_end: vec![3, 8, 11, 13, 14, 24, 29, 36, 41],
-            commit_indexes: vec![
-                (4, 9),
-                (1, 0),
-                (2, 5),
-                (5, 10),
-                (1, 5),
-                (6, 10),
-                (1, 5),
-                (3, 10),
-                (7, 10),
-            ],
-        };
-
-        tracker.update_lines(6, 10, (8, 10));
-        assert_eq!(
-            tracker,
-            FileDiffTracker {
-                commit_line_end: vec![3, 6, 16, 24, 29, 36, 41],
-                commit_indexes: vec![(4, 9), (1, 0), (8, 10), (6, 10), (1, 5), (3, 10), (7, 10)],
-            }
-        );
-    }
+    */
 }
