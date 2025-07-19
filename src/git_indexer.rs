@@ -4,10 +4,7 @@ use anyhow::Result;
 use git2::{Delta, ObjectType, Repository, Sort, Tree, TreeWalkResult};
 use roaring::RoaringBitmap;
 
-use crate::{
-    git::diff::{self, FileDiffTracker},
-    tokenizer::Tokenizer,
-};
+use crate::{git::diff::FileDiffTracker, tokenizer::Tokenizer};
 
 pub type CommitIndex = usize;
 type FileId = usize;
@@ -280,6 +277,10 @@ impl GitIndexer {
                         assert!(hunk.prev_line_count == 0);
                     }
 
+                    if hunk.new_line_start_num == 0 {
+                        assert!(hunk.new_line_count == 0);
+                    }
+
                     if hunk.prev_line_count > 0 {
                         // Hunk uses 1-based line number and the deleted line
                         // number "includes" the deleted line. E.g. if
@@ -293,11 +294,13 @@ impl GitIndexer {
                             hunk.prev_line_count as usize,
                         );
 
-                        diff_tracker.add_lines(
-                            hunk.prev_line_start_num as usize - 1,
-                            hunk.new_line_count as usize,
-                            (*commit_id, (hunk.new_line_start_num - 1) as usize),
-                        );
+                        if hunk.new_line_count > 0 {
+                            diff_tracker.add_lines(
+                                hunk.prev_line_start_num as usize - 1,
+                                hunk.new_line_count as usize,
+                                (*commit_id, (hunk.new_line_start_num - 1) as usize),
+                            );
+                        }
                     } else {
                         // If the "delete" is not happening, then it means only
                         // new line is added. Since the line is added "after"
