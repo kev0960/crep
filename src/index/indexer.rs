@@ -1,13 +1,13 @@
 use indicatif::{ProgressBar, ProgressStyle};
-use owo_colors::OwoColorize;
 use roaring::RoaringBitmap;
 use std::{collections::HashMap, path::Path};
 use walkdir::WalkDir;
 
-use crate::{
+use crate::tokenizer::{Tokenizer, WordPosition};
+
+use super::{
     git_indexer::GitIndexer,
     index::{FileToWordPos, Index},
-    tokenizer::Tokenizer,
 };
 
 pub struct Indexer {
@@ -100,7 +100,12 @@ impl Indexer {
     ) -> Result<(), std::io::Error> {
         let content = std::fs::read_to_string(path)?;
 
-        let tokenizer_result = Tokenizer::split_to_words(&content);
+        let tokenizer_result = Tokenizer::split_to_words_with_col(&content);
+        let word_to_lines = match tokenizer_result.word_pos {
+            WordPosition::LineNumWithColNoDedup(pos) => pos,
+            _ => panic!("Must be LineNumWithColNoDedup"),
+        };
+
         for word in tokenizer_result.total_words {
             let bitmap = word_to_bitmap.entry(word.to_string()).or_default();
             bitmap.insert(file_id as u32);
@@ -108,8 +113,7 @@ impl Indexer {
 
         file_to_word_pos.insert(
             file_id as usize,
-            tokenizer_result
-                .word_pos
+            word_to_lines
                 .into_iter()
                 .map(|(word, positions)| (word.to_string(), positions))
                 .collect(),
@@ -135,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_indexing_directory() {
-        let mut indexer = Indexer::new(&append_test_dir_path("test_data/indexer"));
+        let indexer = Indexer::new(&append_test_dir_path("test_data/indexer"));
         let index = indexer.index_directory();
 
         let mut files_indexed = index.files.clone();

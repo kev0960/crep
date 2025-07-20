@@ -1,13 +1,11 @@
 use std::io::{self, Write};
 
-use indexer::Indexer;
+use index::indexer::Indexer;
 use result_viewer::SearchResultViewer;
 use searcher::Searcher;
 
 mod git;
-mod git_indexer;
 mod index;
-mod indexer;
 mod result_viewer;
 mod searcher;
 mod tokenizer;

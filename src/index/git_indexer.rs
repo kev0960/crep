@@ -4,7 +4,12 @@ use anyhow::Result;
 use git2::{Delta, ObjectType, Repository, Sort, Tree, TreeWalkResult};
 use roaring::RoaringBitmap;
 
-use crate::{git::diff::FileDiffTracker, tokenizer::Tokenizer};
+use crate::{
+    git::diff::FileDiffTracker,
+    tokenizer::{Tokenizer, WordPosition},
+};
+
+use super::document::Document;
 
 pub type CommitIndex = usize;
 type FileId = usize;
@@ -109,9 +114,6 @@ impl GitIndexer {
 
         let current_diff_file: RefCell<Option<CurrentGitDiffFile>> = RefCell::new(None);
 
-        // TODO: Generate GitDelta struct. Store Deltas to this vec (from for_each)
-        // We need to process Hunks in reverse to handle prefix sum properly.
-        //
         let file_delta = RefCell::new(Vec::<GitDelta>::new());
 
         diff.foreach(
@@ -230,20 +232,22 @@ impl GitIndexer {
         commit_id: &CommitIndex,
         file_id: FileId,
         word_to_bitmap: &mut HashMap<String, RoaringBitmap>,
-        file_to_word_pos: &mut HashMap<usize, Document>,
+        file_to_document: &mut HashMap<usize, Document>,
         content: &str,
     ) {
-        let tokenizer_result = Tokenizer::split_to_words(content);
+        let tokenizer_result = Tokenizer::split_to_word_line_only(content);
 
         for word in tokenizer_result.total_words {
             let bitmap = word_to_bitmap.entry(word.to_string()).or_default();
             bitmap.insert(file_id as u32);
         }
 
-        file_to_word_pos.insert(
-            file_id,
-            Document::new(*commit_id, tokenizer_result.word_pos),
-        );
+        let word_to_lines = match tokenizer_result.word_pos {
+            WordPosition::LineNumOnlyWithDedup(pos) => pos,
+            _ => panic!("Must be LineNumOnlyWithDedup"),
+        };
+
+        file_to_document.insert(file_id, Document::new(*commit_id, word_to_lines));
 
         self.file_id_to_diff_tracker.insert(
             file_id,
@@ -371,46 +375,4 @@ struct GitDelta {
 
     new_line_start_num: u32,
     new_line_count: u32,
-}
-
-pub struct WordIndex {
-    line_number: usize,
-    col_number: usize,
-    commit_start: CommitIndex,
-    commit_end: Option<CommitIndex>,
-}
-
-pub struct Document {
-    words: HashMap<String, Vec<WordIndex>>,
-
-    // For each word, we track whether the specific word was included in the specific commit.
-    word_commit_inclutivity: HashMap<String, RoaringBitmap>,
-
-    // Whether the word_commit_inclutivity is updated or not.
-    should_update_inclutivity: bool,
-}
-
-impl Document {
-    fn new(commit_index: CommitIndex, words: HashMap<&str, Vec<(usize, usize)>>) -> Self {
-        Self {
-            words: words
-                .into_iter()
-                .map(|(k, v)| {
-                    (
-                        k.to_owned(),
-                        v.into_iter()
-                            .map(|(line_num, col_num)| WordIndex {
-                                line_number: line_num,
-                                col_number: col_num,
-                                commit_start: commit_index,
-                                commit_end: None,
-                            })
-                            .collect(),
-                    )
-                })
-                .collect(),
-            word_commit_inclutivity: HashMap::new(),
-            should_update_inclutivity: true,
-        }
-    }
 }

@@ -1,7 +1,7 @@
 use owo_colors::OwoColorize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::index::FileToWordPos;
+use crate::index::index::FileToWordPos;
 
 const MAX_CHARS_TO_SHOW: usize = 80;
 

@@ -1,9 +1,10 @@
-use crate::{index::Index, result_viewer::SearchResult};
 use fst::{
     IntoStreamer,
     automaton::{Levenshtein, Str},
 };
 use roaring::RoaringBitmap;
+
+use crate::{index::index::Index, result_viewer::SearchResult};
 
 pub struct Searcher<'i> {
     index: &'i Index,
