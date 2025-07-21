@@ -71,6 +71,47 @@ impl Tokenizer {
             ),
         }
     }
+
+    pub fn split_lines_to_word_line_only(
+        lines: &[String],
+        line_start_index: usize,
+    ) -> TokenizerResult {
+        let mut total_words = HashSet::new();
+        let mut word_pos: HashMap<&str, BTreeSet<usize>> = HashMap::new();
+
+        let mut start = 0;
+        for (line_num, line) in lines.iter().enumerate() {
+            for (i, c) in line.char_indices() {
+                if c.is_ascii_punctuation() || c.is_ascii_whitespace() {
+                    if i > start {
+                        let word = &line[start..i];
+                        total_words.insert(word);
+                        word_pos.entry(word).or_default().insert(line_num);
+                    }
+                    start = i + c.len_utf8()
+                }
+            }
+
+            if start < line.len() {
+                let word = &line[start..];
+                total_words.insert(word);
+                word_pos
+                    .entry(word)
+                    .or_default()
+                    .insert(line_num + line_start_index);
+            }
+        }
+
+        TokenizerResult {
+            total_words,
+            word_pos: WordPosition::LineNumOnlyWithDedup(
+                word_pos
+                    .into_iter()
+                    .map(|(word, lines)| (word, lines.into_iter().collect()))
+                    .collect(),
+            ),
+        }
+    }
 }
 
 type LineNumAndByteIndexPos = (usize, usize);

@@ -1,5 +1,8 @@
 use priority_queue::PriorityQueue;
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 use roaring::RoaringBitmap;
 
@@ -33,43 +36,154 @@ impl PartialOrd for CommitEndPriority {
     }
 }
 
+#[derive(Default, Debug, PartialEq)]
 pub struct WordIndex {
+    // PQ where CommitEndPriority refers to the last commit that the word was used.
     word_history: PriorityQueue<WordKey, CommitEndPriority>,
+
+    // Whether the specific word is included in a given commit.
+    commit_inclutivity: RoaringBitmap,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Document {
     words: HashMap<String, WordIndex>,
-
-    // For each word, we track whether the specific word was included in the specific commit.
-    word_commit_inclutivity: HashMap<String, RoaringBitmap>,
 }
 
 impl Document {
-    pub fn new(commit_id: CommitIndex, words: HashMap<&str, Vec<usize>>) -> Self {
-        let mut word_history = HashMap::<String, WordIndex>::new();
-        for (word, lines) in words.into_iter() {
-            let word_index = word_history
+    pub fn new() -> Self {
+        Self {
+            words: HashMap::new(),
+        }
+    }
+
+    pub fn add_words(&mut self, commit_index: CommitIndex, words: HashMap<&str, Vec<usize>>) {
+        for (word, lines) in words {
+            let word_index = self
+                .words
                 .entry(word.to_owned())
-                .or_insert_with(|| WordIndex {
-                    word_history: PriorityQueue::new(),
-                });
+                .or_insert_with(WordIndex::default);
 
             for line in lines {
+                word_index.word_history.push(
+                    WordKey {
+                        commit_id: commit_index,
+                        line,
+                    },
+                    CommitEndPriority(None),
+                );
+            }
+
+            word_index.commit_inclutivity.insert(commit_index as u32);
+        }
+    }
+
+    pub fn remove_words(&mut self, commit_index: CommitIndex, words: &[(&str, WordKey)]) {
+        for (word, word_key) in words {
+            let word_index = self.words.get_mut(*word);
+            if let Some(word_index) = word_index {
                 word_index
                     .word_history
-                    .push(WordKey { commit_id, line }, CommitEndPriority(None));
+                    .change_priority(word_key, CommitEndPriority(Some(commit_index - 1)));
             }
         }
 
-        Self {
-            words: word_history,
-            word_commit_inclutivity: HashMap::new(),
+        let modified_words: HashSet<&str> = words.iter().map(|(word, _)| *word).collect();
+        for word in modified_words {
+            self.update_commit_inclutivity(commit_index, word);
+        }
+    }
+
+    fn update_commit_inclutivity(&mut self, commit_index: CommitIndex, word: &str) {
+        if let Some(word_index) = self.words.get_mut(word) {
+            if let Some((_, last_commit)) = word_index.word_history.peek() {
+                let last_enabled_commit = word_index.commit_inclutivity.max();
+                let end_commit_index = match last_commit {
+                    CommitEndPriority(None) => commit_index,
+                    CommitEndPriority(Some(commit_id)) => *commit_id,
+                };
+
+                if let Some(last_enabled_bit) = last_enabled_commit {
+                    word_index
+                        .commit_inclutivity
+                        .insert_range(last_enabled_bit..((end_commit_index + 1) as u32));
+                } else {
+                    word_index
+                        .commit_inclutivity
+                        .insert(end_commit_index as u32);
+                }
+            }
         }
     }
 }
 
 #[cfg(test)]
-mod test {
+mod document_test {
+    use super::*;
+
+    #[test]
+    fn add_words() {
+        let words = HashMap::from([("hi", vec![1, 2]), ("hello", vec![1, 3])]);
+
+        let mut document = Document::new();
+
+        document.add_words(1, words);
+        assert_eq!(
+            document,
+            Document {
+                words: HashMap::from([
+                    (
+                        "hi".to_owned(),
+                        WordIndex {
+                            word_history: PriorityQueue::from(vec![
+                                (
+                                    WordKey {
+                                        commit_id: 1,
+                                        line: 1
+                                    },
+                                    CommitEndPriority(None)
+                                ),
+                                (
+                                    WordKey {
+                                        commit_id: 1,
+                                        line: 2
+                                    },
+                                    CommitEndPriority(None)
+                                )
+                            ]),
+                            commit_inclutivity: RoaringBitmap::from([1])
+                        }
+                    ),
+                    (
+                        "hello".to_owned(),
+                        WordIndex {
+                            word_history: PriorityQueue::from(vec![
+                                (
+                                    WordKey {
+                                        commit_id: 1,
+                                        line: 1
+                                    },
+                                    CommitEndPriority(None)
+                                ),
+                                (
+                                    WordKey {
+                                        commit_id: 1,
+                                        line: 3
+                                    },
+                                    CommitEndPriority(None)
+                                )
+                            ]),
+                            commit_inclutivity: RoaringBitmap::from([1])
+                        }
+                    )
+                ])
+            }
+        );
+    }
+}
+
+#[cfg(test)]
+mod pq_test {
     use super::*;
 
     fn insert_into_pq(

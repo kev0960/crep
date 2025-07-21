@@ -17,9 +17,12 @@ type FileId = usize;
 pub struct GitIndexer {
     commit_index_to_commit_id: Vec<[u8; 20]>,
     commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
+
     file_name_to_id: HashMap<String, FileId>,
     file_id_to_name: Vec<String>,
     file_id_to_diff_tracker: HashMap<FileId, FileDiffTracker>,
+
+    file_id_to_document: HashMap<FileId, Document>,
 }
 
 #[derive(Debug)]
@@ -36,6 +39,7 @@ impl GitIndexer {
             file_name_to_id: HashMap::new(),
             file_id_to_name: Vec::new(),
             file_id_to_diff_tracker: HashMap::new(),
+            file_id_to_document: HashMap::new(),
         }
     }
 
@@ -105,7 +109,7 @@ impl GitIndexer {
         current_tree: &Tree,
         prev_tree: &Tree,
         repo: &Repository,
-        commit_id: &CommitIndex,
+        commit_index: &CommitIndex,
     ) -> Result<()> {
         let mut opts = git2::DiffOptions::new();
         opts.context_lines(0);
@@ -122,7 +126,7 @@ impl GitIndexer {
                 let mut current_diff_file = current_diff_file.borrow_mut();
 
                 if !file_delta.is_empty() {
-                    self.index_git_delta(&current_diff_file, &file_delta, commit_id)
+                    self.index_git_delta(&current_diff_file, &file_delta, commit_index)
                         .unwrap();
                     file_delta.clear();
                 }
@@ -173,16 +177,34 @@ impl GitIndexer {
                     prev_line_count: hunk.old_lines(),
                     new_line_start_num: hunk.new_start(),
                     new_line_count: hunk.new_lines(),
+                    added_lines: Vec::with_capacity(hunk.new_lines() as usize),
                 });
 
                 true
             }),
-            None,
+            Some(&mut |_, _, line| {
+                let current_diff_file = current_diff_file.borrow();
+                if let Some(current_diff_file) = current_diff_file.as_ref()
+                    && (current_diff_file.status == Delta::Modified
+                        || current_diff_file.status == Delta::Added)
+                {
+                    if line.origin() == '+' {
+                        let mut file_delta = file_delta.borrow_mut();
+                        file_delta.last_mut().unwrap().added_lines.push(
+                            std::str::from_utf8(line.content())
+                                .unwrap_or("<invalid utf8>")
+                                .to_owned(),
+                        );
+                    }
+                }
+
+                true
+            }),
         )?;
 
         let file_delta = file_delta.borrow_mut();
         if !file_delta.is_empty() {
-            self.index_git_delta(&current_diff_file.borrow_mut(), &file_delta, commit_id)
+            self.index_git_delta(&current_diff_file.borrow_mut(), &file_delta, commit_index)
                 .unwrap();
         }
 
@@ -191,7 +213,7 @@ impl GitIndexer {
 
     fn index_tree(
         &mut self,
-        commit_id: &CommitIndex,
+        commit_index: &CommitIndex,
         tree: &Tree,
         repo: &Repository,
     ) -> Result<()> {
@@ -208,11 +230,11 @@ impl GitIndexer {
                     };
 
                     let content = std::str::from_utf8(blob.content()).unwrap();
-                    let file_name = &format!("{}{}", root, name);
+                    let file_name = &format!("{root}{name}");
 
                     let file_id = self.get_file_id_insert_if_missing(file_name);
                     self.index_file(
-                        commit_id,
+                        commit_index,
                         file_id,
                         &mut word_to_bitmap,
                         &mut file_to_word_pos,
@@ -229,7 +251,7 @@ impl GitIndexer {
 
     fn index_file(
         &mut self,
-        commit_id: &CommitIndex,
+        commit_index: &CommitIndex,
         file_id: FileId,
         word_to_bitmap: &mut HashMap<String, RoaringBitmap>,
         file_to_document: &mut HashMap<usize, Document>,
@@ -247,11 +269,14 @@ impl GitIndexer {
             _ => panic!("Must be LineNumOnlyWithDedup"),
         };
 
-        file_to_document.insert(file_id, Document::new(*commit_id, word_to_lines));
+        let mut document = Document::new();
+        document.add_words(*commit_index, word_to_lines);
+
+        file_to_document.insert(file_id, document);
 
         self.file_id_to_diff_tracker.insert(
             file_id,
-            FileDiffTracker::new(*commit_id, content.lines().count()),
+            FileDiffTracker::new(*commit_index, content.lines().count()),
         );
     }
 
@@ -259,7 +284,7 @@ impl GitIndexer {
         &mut self,
         file: &Option<CurrentGitDiffFile>,
         hunks: &[GitDelta],
-        commit_id: &CommitIndex,
+        commit_index: &CommitIndex,
     ) -> Result<(), String> {
         if file.is_none() {
             return Err("file should not be empty".to_owned());
@@ -302,7 +327,7 @@ impl GitIndexer {
                             diff_tracker.add_lines(
                                 hunk.prev_line_start_num as usize - 1,
                                 hunk.new_line_count as usize,
-                                (*commit_id, (hunk.new_line_start_num - 1) as usize),
+                                (*commit_index, (hunk.new_line_start_num - 1) as usize),
                             );
                         }
                     } else {
@@ -312,7 +337,7 @@ impl GitIndexer {
                         diff_tracker.add_lines(
                             hunk.prev_line_start_num as usize,
                             hunk.new_line_count as usize,
-                            (*commit_id, (hunk.new_line_start_num - 1) as usize),
+                            (*commit_index, (hunk.new_line_start_num - 1) as usize),
                         );
                     }
                 }
@@ -320,42 +345,37 @@ impl GitIndexer {
             Delta::Added => {
                 if hunks.len() != 1 {
                     return Err(format!(
-                        "new file should have one hunk - {:?} {:?}",
-                        file, hunks
+                        "new file should have one hunk - {file:?} {hunks:?}",
                     ));
                 }
 
                 if hunks[0].new_line_start_num != 1 {
                     return Err(format!(
-                        "new file hunk does not start with 1? - {:?} {:?}",
-                        file, hunks
+                        "new file hunk does not start with 1? - {file:?} {hunks:?}",
                     ));
                 }
 
                 if hunks[0].prev_line_start_num != 0 {
                     return Err(format!(
-                        "prev file hunk does not start with 0? - {:?} {:?}",
-                        file, hunks
+                        "prev file hunk does not start with 0? - {file:?} {hunks:?}",
                     ));
                 }
 
                 self.file_id_to_diff_tracker.insert(
                     file_id,
-                    FileDiffTracker::new(*commit_id, hunks[0].new_line_count as usize),
+                    FileDiffTracker::new(*commit_index, hunks[0].new_line_count as usize),
                 );
             }
             Delta::Deleted => {
                 if hunks.len() != 1 {
                     return Err(format!(
-                        "deleted file should have one hunk - {:?} {:?}",
-                        file, hunks
+                        "deleted file should have one hunk - {file:?} {hunks:?}",
                     ));
                 }
 
                 if hunks[0].new_line_start_num != 0 {
                     return Err(format!(
-                        "delete file hunk does not start with 0? - {:?} {:?}",
-                        file, hunks
+                        "delete file hunk does not start with 0? - {file:?} {hunks:?}",
                     ));
                 }
 
@@ -366,6 +386,40 @@ impl GitIndexer {
 
         Ok(())
     }
+
+    // Add a new line at "prev_line_start".
+    //
+    // New lines are copied from (new_line_start, new_line_count) from the new file.
+    fn add_new_lines(
+        &mut self,
+        commit_index: CommitIndex,
+        file_id: FileId,
+        prev_line_start: usize,
+        new_line_start: usize,
+        lines: &[String],
+    ) {
+        let diff_tracker = self.file_id_to_diff_tracker.get_mut(&file_id);
+        if let Some(tracker) = diff_tracker {
+            tracker.add_lines(prev_line_start, lines.len(), (commit_index, new_line_start));
+        } else {
+            self.file_id_to_diff_tracker
+                .insert(file_id, FileDiffTracker::new(commit_index, lines.len()));
+        }
+
+        // Now index those new lines.
+        let tokens = Tokenizer::split_lines_to_word_line_only(lines, new_line_start).word_pos;
+        let word_to_lines = match tokens {
+            WordPosition::LineNumOnlyWithDedup(word_to_lines) => word_to_lines,
+            _ => panic!(),
+        };
+
+        let document = self
+            .file_id_to_document
+            .entry(file_id)
+            .or_insert(Document::new());
+
+        document.add_words(commit_index, word_to_lines);
+    }
 }
 
 #[derive(Debug)]
@@ -375,4 +429,6 @@ struct GitDelta {
 
     new_line_start_num: u32,
     new_line_count: u32,
+
+    added_lines: Vec<String>,
 }
