@@ -187,15 +187,14 @@ impl GitIndexer {
                 if let Some(current_diff_file) = current_diff_file.as_ref()
                     && (current_diff_file.status == Delta::Modified
                         || current_diff_file.status == Delta::Added)
+                    && line.origin() == '+'
                 {
-                    if line.origin() == '+' {
-                        let mut file_delta = file_delta.borrow_mut();
-                        file_delta.last_mut().unwrap().added_lines.push(
-                            std::str::from_utf8(line.content())
-                                .unwrap_or("<invalid utf8>")
-                                .to_owned(),
-                        );
-                    }
+                    let mut file_delta = file_delta.borrow_mut();
+                    file_delta.last_mut().unwrap().added_lines.push(
+                        std::str::from_utf8(line.content())
+                            .unwrap_or("<invalid utf8>")
+                            .to_owned(),
+                    );
                 }
 
                 true
@@ -295,12 +294,14 @@ impl GitIndexer {
 
         match status {
             Delta::Modified => {
+                /*
                 let diff_tracker = self.file_id_to_diff_tracker.get_mut(&file_id);
                 if diff_tracker.is_none() {
                     return Err("diff tracker is not found".to_owned());
                 }
 
                 let diff_tracker = diff_tracker.unwrap();
+                */
                 for hunk in hunks.iter().rev() {
                     if hunk.prev_line_start_num == 0 {
                         assert!(hunk.prev_line_count == 0);
@@ -318,26 +319,37 @@ impl GitIndexer {
                         //
                         // Hence we have to deduct 1 since the indexes are zero
                         // based.
-                        diff_tracker.delete_lines(
+                        self.delete_lines(
+                            file_id,
                             hunk.prev_line_start_num as usize - 1,
                             hunk.prev_line_count as usize,
                         );
 
                         if hunk.new_line_count > 0 {
-                            diff_tracker.add_lines(
-                                hunk.prev_line_start_num as usize - 1,
-                                hunk.new_line_count as usize,
-                                (*commit_index, (hunk.new_line_start_num - 1) as usize),
+                            // diff_tracker.add_lines(
+                            //     hunk.prev_line_start_num as usize - 1,
+                            //     hunk.new_line_count as usize,
+                            //     (*commit_index, (hunk.new_line_start_num - 1) as usize),
+                            // );
+
+                            self.add_new_lines(
+                                *commit_index,
+                                file_id,
+                                (hunk.prev_line_start_num - 1) as usize,
+                                (hunk.new_line_start_num - 1) as usize,
+                                &hunk.added_lines,
                             );
                         }
                     } else {
                         // If the "delete" is not happening, then it means only
                         // new line is added. Since the line is added "after"
                         // the 1-based line number, we do not need to deduct 1.
-                        diff_tracker.add_lines(
+                        self.add_new_lines(
+                            *commit_index,
+                            file_id,
                             hunk.prev_line_start_num as usize,
-                            hunk.new_line_count as usize,
-                            (*commit_index, (hunk.new_line_start_num - 1) as usize),
+                            (hunk.new_line_start_num - 1) as usize,
+                            &hunk.added_lines,
                         );
                     }
                 }
@@ -419,6 +431,19 @@ impl GitIndexer {
             .or_insert(Document::new());
 
         document.add_words(commit_index, word_to_lines);
+    }
+
+    fn delete_lines(
+        &mut self,
+        file_id: FileId,
+        delete_line_start: usize,
+        delete_line_count: usize,
+    ) {
+        let diff_tracker = self.file_id_to_diff_tracker.get_mut(&file_id);
+        assert!(diff_tracker.is_some());
+
+        let diff_tracker = diff_tracker.unwrap();
+        diff_tracker.delete_lines(delete_line_start, delete_line_count);
     }
 }
 
