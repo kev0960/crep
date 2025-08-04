@@ -45,6 +45,7 @@ impl<'i> Searcher<'i> {
             search_result.push(SearchResult {
                 files,
                 words: result.words.iter().map(|s| s.to_string()).collect(),
+                git_commit_range: None,
             });
         }
 

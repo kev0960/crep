@@ -6,6 +6,7 @@ use result_viewer::SearchResultViewer;
 use searcher::Searcher;
 
 mod git;
+mod git_searcher;
 mod index;
 mod result_viewer;
 mod searcher;

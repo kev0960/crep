@@ -6,11 +6,12 @@ use crate::{
 };
 use anyhow::Result;
 use git2::{Delta, ObjectType, Repository, Sort, Tree, TreeWalkResult};
+use roaring::RoaringBitmap;
 
 use super::document::{Document, WordKey};
 
 pub type CommitIndex = usize;
-type FileId = usize;
+pub type FileId = usize;
 
 pub struct GitIndexer {
     commit_index_to_commit_id: Vec<[u8; 20]>,
@@ -21,6 +22,14 @@ pub struct GitIndexer {
     file_id_to_diff_tracker: HashMap<FileId, FileDiffTracker>,
 
     file_id_to_document: HashMap<FileId, Document>,
+
+    // RoaringBitmap is set if the corresponding file id contains the word.
+
+    // Check the words in the last commit, if the word exists then this bit is set.
+    word_to_file_id_last_commit: HashMap<String, RoaringBitmap>,
+
+    // Check the words in the last 10 commits, and if the word exists then this bit is set.
+    word_to_file_id_last_10_commits: HashMap<String, RoaringBitmap>,
 }
 
 #[derive(Debug)]
@@ -38,6 +47,8 @@ impl GitIndexer {
             file_id_to_name: Vec::new(),
             file_id_to_diff_tracker: HashMap::new(),
             file_id_to_document: HashMap::new(),
+            word_to_file_id_last_commit: HashMap::new(),
+            word_to_file_id_last_10_commits: HashMap::new(),
         }
     }
 

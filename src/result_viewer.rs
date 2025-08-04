@@ -10,6 +10,8 @@ pub struct SearchResult {
 
     // File path and the id.
     pub files: Vec<(String, usize)>,
+
+    pub git_commit_range: Option<(usize, usize)>,
 }
 
 pub struct SearchResultViewer {

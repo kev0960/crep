@@ -48,6 +48,7 @@ pub struct WordIndex {
 #[derive(Debug, PartialEq)]
 pub struct Document {
     words: HashMap<String, WordIndex>,
+    words_in_commit_window: Vec<HashSet<String>>,
 }
 
 impl Document {
