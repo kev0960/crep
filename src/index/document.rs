@@ -8,12 +8,12 @@ use roaring::RoaringBitmap;
 
 use super::git_indexer::CommitIndex;
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq, Clone, Copy)]
 pub struct WordKey {
-    commit_id: CommitIndex,
+    pub commit_id: CommitIndex,
 
     // Line within the commit when the word was first introduced.
-    line: usize,
+    pub line: usize,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -57,12 +57,13 @@ impl Document {
         }
     }
 
-    pub fn add_words(&mut self, commit_index: CommitIndex, words: HashMap<&str, Vec<usize>>) {
+    pub fn add_words(
+        &mut self,
+        commit_index: CommitIndex,
+        words: HashMap<&str, Vec<usize>>,
+    ) {
         for (word, lines) in words {
-            let word_index = self
-                .words
-                .entry(word.to_owned())
-                .or_insert_with(WordIndex::default);
+            let word_index = self.words.entry(word.to_owned()).or_default();
 
             for line in lines {
                 word_index.word_history.push(
@@ -78,23 +79,73 @@ impl Document {
         }
     }
 
-    pub fn remove_words(&mut self, commit_index: CommitIndex, words: &[(&str, WordKey)]) {
-        for (word, word_key) in words {
+    pub fn remove_words(
+        &mut self,
+        commit_index: CommitIndex,
+        words: &[(&str, Vec<WordKey>)],
+    ) {
+        for (word, word_keys) in words {
             let word_index = self.words.get_mut(*word);
             if let Some(word_index) = word_index {
-                word_index
-                    .word_history
-                    .change_priority(word_key, CommitEndPriority(Some(commit_index - 1)));
+                for word_key in word_keys {
+                    word_index.word_history.change_priority(
+                        word_key,
+                        // TODO: Get prev commit properly.
+                        CommitEndPriority(Some(commit_index - 1)),
+                    );
+                }
             }
         }
 
-        let modified_words: HashSet<&str> = words.iter().map(|(word, _)| *word).collect();
+        let modified_words: HashSet<&str> =
+            words.iter().map(|(word, _)| *word).collect();
         for word in modified_words {
             self.update_commit_inclutivity(commit_index, word);
         }
     }
 
-    fn update_commit_inclutivity(&mut self, commit_index: CommitIndex, word: &str) {
+    pub fn remove_document(&mut self, commit_index: CommitIndex) {
+        for word_index in self.words.values_mut() {
+            let mut is_commit_end_modified = false;
+
+            // If there is a word key that is not marked as ended,
+            // then end it now.
+            loop {
+                let end = match word_index.word_history.peek() {
+                    Some((key, priority)) => Some((*key, priority)),
+                    _ => None,
+                };
+
+                if let Some((key, priority)) = end {
+                    if priority == &CommitEndPriority(None) {
+                        word_index.word_history.change_priority(
+                            &key,
+                            // TODO: Get prev commit properly.
+                            CommitEndPriority(Some(commit_index - 1)),
+                        );
+
+                        is_commit_end_modified = true;
+                        continue;
+                    }
+                }
+
+                break;
+            }
+
+            if is_commit_end_modified {
+                let last_enabled_commit = word_index.commit_inclutivity.max();
+                word_index.commit_inclutivity.insert_range(
+                    last_enabled_commit.unwrap()..((commit_index) as u32),
+                );
+            }
+        }
+    }
+
+    fn update_commit_inclutivity(
+        &mut self,
+        commit_index: CommitIndex,
+        word: &str,
+    ) {
         if let Some(word_index) = self.words.get_mut(word) {
             if let Some((_, last_commit)) = word_index.word_history.peek() {
                 let last_enabled_commit = word_index.commit_inclutivity.max();
@@ -104,9 +155,9 @@ impl Document {
                 };
 
                 if let Some(last_enabled_bit) = last_enabled_commit {
-                    word_index
-                        .commit_inclutivity
-                        .insert_range(last_enabled_bit..((end_commit_index + 1) as u32));
+                    word_index.commit_inclutivity.insert_range(
+                        last_enabled_bit..((end_commit_index + 1) as u32),
+                    );
                 } else {
                     word_index
                         .commit_inclutivity

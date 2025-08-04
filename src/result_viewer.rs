@@ -57,7 +57,9 @@ impl SearchResultViewer {
                     None => continue,
                 };
 
-                if let Some(output) = self.to_search_result(&result.words, file_path, word_pos) {
+                if let Some(output) =
+                    self.to_search_result(&result.words, file_path, word_pos)
+                {
                     total_output.push(format!(
                         "{}. {}\n{}",
                         search_result_index, file_path, output
@@ -78,7 +80,8 @@ impl SearchResultViewer {
     ) -> Option<String> {
         let lines = self.file_path_to_content.get(file)?;
 
-        let mut file_line_and_pos_to_mark: BTreeMap<usize, Vec<(&str, usize)>> = BTreeMap::new();
+        let mut file_line_and_pos_to_mark: BTreeMap<usize, Vec<(&str, usize)>> =
+            BTreeMap::new();
 
         for word in words {
             let positions = word_pos.get(word);
@@ -102,7 +105,11 @@ impl SearchResultViewer {
         let mut prev_line_num = None;
         for (line_num, pos) in file_line_and_pos_to_mark {
             if line_num > 0 && prev_line_num != Some(line_num - 1) {
-                output_lines.push(format!("{:>6}| {}", line_num, lines[line_num - 1]));
+                output_lines.push(format!(
+                    "{:>6}| {}",
+                    line_num,
+                    lines[line_num - 1]
+                ));
             }
 
             output_lines.push(format!(
@@ -118,7 +125,10 @@ impl SearchResultViewer {
     }
 }
 
-fn highlight_line_by_positions(line: &str, positions: &[(&str, usize)]) -> String {
+fn highlight_line_by_positions(
+    line: &str,
+    positions: &[(&str, usize)],
+) -> String {
     let mut result = String::new();
 
     let mut current = 0;

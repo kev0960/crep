@@ -18,7 +18,10 @@ impl Tokenizer {
                     if i > start {
                         let word = &line[start..i];
                         total_words.insert(word);
-                        word_pos.entry(word).or_default().push((line_num, start));
+                        word_pos
+                            .entry(word)
+                            .or_default()
+                            .push((line_num, start));
                     }
                     start = i + c.len_utf8()
                 }

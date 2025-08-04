@@ -1,15 +1,13 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use anyhow::Result;
-use git2::{Delta, ObjectType, Repository, Sort, Tree, TreeWalkResult};
-use roaring::RoaringBitmap;
-
 use crate::{
-    git::diff::FileDiffTracker,
+    git::diff::{FileDiffTracker, LineDeleteResult},
     tokenizer::{Tokenizer, WordPosition},
 };
+use anyhow::Result;
+use git2::{Delta, ObjectType, Repository, Sort, Tree, TreeWalkResult};
 
-use super::document::Document;
+use super::document::{Document, WordKey};
 
 pub type CommitIndex = usize;
 type FileId = usize;
@@ -43,7 +41,10 @@ impl GitIndexer {
         }
     }
 
-    fn get_file_id_insert_if_missing(&mut self, file_full_path: &str) -> FileId {
+    fn get_file_id_insert_if_missing(
+        &mut self,
+        file_full_path: &str,
+    ) -> FileId {
         match self.file_name_to_id.get(file_full_path) {
             Some(id) => *id,
             None => {
@@ -114,9 +115,14 @@ impl GitIndexer {
         let mut opts = git2::DiffOptions::new();
         opts.context_lines(0);
 
-        let diff = repo.diff_tree_to_tree(Some(prev_tree), Some(current_tree), Some(&mut opts))?;
+        let diff = repo.diff_tree_to_tree(
+            Some(prev_tree),
+            Some(current_tree),
+            Some(&mut opts),
+        )?;
 
-        let current_diff_file: RefCell<Option<CurrentGitDiffFile>> = RefCell::new(None);
+        let current_diff_file: RefCell<Option<CurrentGitDiffFile>> =
+            RefCell::new(None);
 
         let file_delta = RefCell::new(Vec::<GitDelta>::new());
 
@@ -126,16 +132,21 @@ impl GitIndexer {
                 let mut current_diff_file = current_diff_file.borrow_mut();
 
                 if !file_delta.is_empty() {
-                    self.index_git_delta(&current_diff_file, &file_delta, commit_index)
-                        .unwrap();
+                    self.index_git_delta(
+                        &current_diff_file,
+                        &file_delta,
+                        commit_index,
+                    )
+                    .unwrap();
                     file_delta.clear();
                 }
 
                 match delta.status() {
                     Delta::Modified => {
                         if let Some(path) = delta.old_file().path() {
-                            let file_id =
-                                self.get_file_id_insert_if_missing(path.to_str().unwrap());
+                            let file_id = self.get_file_id_insert_if_missing(
+                                path.to_str().unwrap(),
+                            );
 
                             *current_diff_file = Some(CurrentGitDiffFile {
                                 current_file_id: file_id,
@@ -145,8 +156,9 @@ impl GitIndexer {
                     }
                     Delta::Deleted => {
                         if let Some(path) = delta.old_file().path() {
-                            let file_id =
-                                self.get_file_id_insert_if_missing(path.to_str().unwrap());
+                            let file_id = self.get_file_id_insert_if_missing(
+                                path.to_str().unwrap(),
+                            );
 
                             *current_diff_file = Some(CurrentGitDiffFile {
                                 current_file_id: file_id,
@@ -156,8 +168,9 @@ impl GitIndexer {
                     }
                     Delta::Added => {
                         if let Some(path) = delta.new_file().path() {
-                            let file_id =
-                                self.get_file_id_insert_if_missing(path.to_str().unwrap());
+                            let file_id = self.get_file_id_insert_if_missing(
+                                path.to_str().unwrap(),
+                            );
 
                             *current_diff_file = Some(CurrentGitDiffFile {
                                 current_file_id: file_id,
@@ -178,19 +191,30 @@ impl GitIndexer {
                     new_line_start_num: hunk.new_start(),
                     new_line_count: hunk.new_lines(),
                     added_lines: Vec::with_capacity(hunk.new_lines() as usize),
+                    deleted_lines: Vec::with_capacity(hunk.old_lines() as usize),
                 });
 
                 true
             }),
             Some(&mut |_, _, line| {
                 let current_diff_file = current_diff_file.borrow();
+
+                // No need to handle Delte::Removed case.
                 if let Some(current_diff_file) = current_diff_file.as_ref()
-                    && (current_diff_file.status == Delta::Modified
-                        || current_diff_file.status == Delta::Added)
-                    && line.origin() == '+'
-                {
-                    let mut file_delta = file_delta.borrow_mut();
+                    && !(current_diff_file.status == Delta::Modified
+                        || current_diff_file.status == Delta::Added) {
+                    return true;
+                }
+
+                let mut file_delta = file_delta.borrow_mut();
+                if line.origin() == '+' {
                     file_delta.last_mut().unwrap().added_lines.push(
+                        std::str::from_utf8(line.content())
+                            .unwrap_or("<invalid utf8>")
+                            .to_owned(),
+                    );
+                } else if line.origin() == '-' {
+                    file_delta.last_mut().unwrap().deleted_lines.push(
                         std::str::from_utf8(line.content())
                             .unwrap_or("<invalid utf8>")
                             .to_owned(),
@@ -203,8 +227,12 @@ impl GitIndexer {
 
         let file_delta = file_delta.borrow_mut();
         if !file_delta.is_empty() {
-            self.index_git_delta(&current_diff_file.borrow_mut(), &file_delta, commit_index)
-                .unwrap();
+            self.index_git_delta(
+                &current_diff_file.borrow_mut(),
+                &file_delta,
+                commit_index,
+            )
+            .unwrap();
         }
 
         Ok(())
@@ -216,9 +244,6 @@ impl GitIndexer {
         tree: &Tree,
         repo: &Repository,
     ) -> Result<()> {
-        let mut word_to_bitmap = HashMap::new();
-        let mut file_to_word_pos = HashMap::new();
-
         tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
             if entry.kind() == Some(ObjectType::Blob) {
                 if let Some(name) = entry.name() {
@@ -232,12 +257,15 @@ impl GitIndexer {
                     let file_name = &format!("{root}{name}");
 
                     let file_id = self.get_file_id_insert_if_missing(file_name);
-                    self.index_file(
-                        commit_index,
+                    self.add_new_lines(
+                        *commit_index,
                         file_id,
-                        &mut word_to_bitmap,
-                        &mut file_to_word_pos,
-                        content,
+                        /*prev_line_start=*/ 0,
+                        /*new_line_start=*/ 0,
+                        &content
+                            .lines()
+                            .map(|line| line.to_string())
+                            .collect::<Vec<String>>(),
                     );
                 }
             }
@@ -246,37 +274,6 @@ impl GitIndexer {
         })?;
 
         Ok(())
-    }
-
-    fn index_file(
-        &mut self,
-        commit_index: &CommitIndex,
-        file_id: FileId,
-        word_to_bitmap: &mut HashMap<String, RoaringBitmap>,
-        file_to_document: &mut HashMap<usize, Document>,
-        content: &str,
-    ) {
-        let tokenizer_result = Tokenizer::split_to_word_line_only(content);
-
-        for word in tokenizer_result.total_words {
-            let bitmap = word_to_bitmap.entry(word.to_string()).or_default();
-            bitmap.insert(file_id as u32);
-        }
-
-        let word_to_lines = match tokenizer_result.word_pos {
-            WordPosition::LineNumOnlyWithDedup(pos) => pos,
-            _ => panic!("Must be LineNumOnlyWithDedup"),
-        };
-
-        let mut document = Document::new();
-        document.add_words(*commit_index, word_to_lines);
-
-        file_to_document.insert(file_id, document);
-
-        self.file_id_to_diff_tracker.insert(
-            file_id,
-            FileDiffTracker::new(*commit_index, content.lines().count()),
-        );
     }
 
     fn index_git_delta(
@@ -294,14 +291,6 @@ impl GitIndexer {
 
         match status {
             Delta::Modified => {
-                /*
-                let diff_tracker = self.file_id_to_diff_tracker.get_mut(&file_id);
-                if diff_tracker.is_none() {
-                    return Err("diff tracker is not found".to_owned());
-                }
-
-                let diff_tracker = diff_tracker.unwrap();
-                */
                 for hunk in hunks.iter().rev() {
                     if hunk.prev_line_start_num == 0 {
                         assert!(hunk.prev_line_count == 0);
@@ -320,9 +309,10 @@ impl GitIndexer {
                         // Hence we have to deduct 1 since the indexes are zero
                         // based.
                         self.delete_lines(
+                            *commit_index,
                             file_id,
                             hunk.prev_line_start_num as usize - 1,
-                            hunk.prev_line_count as usize,
+                            &hunk.deleted_lines,
                         );
 
                         if hunk.new_line_count > 0 {
@@ -373,9 +363,12 @@ impl GitIndexer {
                     ));
                 }
 
-                self.file_id_to_diff_tracker.insert(
+                self.add_new_lines(
+                    *commit_index,
                     file_id,
-                    FileDiffTracker::new(*commit_index, hunks[0].new_line_count as usize),
+                    /*prev_line_start_num=*/ 0,
+                    0,
+                    &hunks[0].added_lines,
                 );
             }
             Delta::Deleted => {
@@ -391,7 +384,7 @@ impl GitIndexer {
                     ));
                 }
 
-                self.file_id_to_diff_tracker.remove(&file_id);
+                self.delete_entire_file(*commit_index, file_id);
             }
             _ => {}
         }
@@ -412,14 +405,22 @@ impl GitIndexer {
     ) {
         let diff_tracker = self.file_id_to_diff_tracker.get_mut(&file_id);
         if let Some(tracker) = diff_tracker {
-            tracker.add_lines(prev_line_start, lines.len(), (commit_index, new_line_start));
+            tracker.add_lines(
+                prev_line_start,
+                lines.len(),
+                (commit_index, new_line_start),
+            );
         } else {
-            self.file_id_to_diff_tracker
-                .insert(file_id, FileDiffTracker::new(commit_index, lines.len()));
+            self.file_id_to_diff_tracker.insert(
+                file_id,
+                FileDiffTracker::new(commit_index, lines.len()),
+            );
         }
 
         // Now index those new lines.
-        let tokens = Tokenizer::split_lines_to_word_line_only(lines, new_line_start).word_pos;
+        let tokens =
+            Tokenizer::split_lines_to_word_line_only(lines, new_line_start)
+                .word_pos;
         let word_to_lines = match tokens {
             WordPosition::LineNumOnlyWithDedup(word_to_lines) => word_to_lines,
             _ => panic!(),
@@ -435,16 +436,88 @@ impl GitIndexer {
 
     fn delete_lines(
         &mut self,
+        commit_index: CommitIndex,
         file_id: FileId,
         delete_line_start: usize,
-        delete_line_count: usize,
+        lines: &[String],
     ) {
         let diff_tracker = self.file_id_to_diff_tracker.get_mut(&file_id);
         assert!(diff_tracker.is_some());
 
         let diff_tracker = diff_tracker.unwrap();
-        diff_tracker.delete_lines(delete_line_start, delete_line_count);
+        let delete_result =
+            diff_tracker.delete_lines(delete_line_start, lines.len());
+
+        let word_key_for_each_deleted_line =
+            flatten_delete_result(&delete_result);
+
+        let document = self.file_id_to_document.get_mut(&file_id);
+        assert!(document.is_some());
+
+        let document = document.unwrap();
+
+        let tokens = Tokenizer::split_lines_to_word_line_only(
+            lines, /*new_line_start=*/ 0,
+        )
+        .word_pos;
+
+        let word_to_lines = match tokens {
+            WordPosition::LineNumOnlyWithDedup(word_to_lines) => word_to_lines,
+            _ => panic!(),
+        }
+        .into_iter()
+        .map(|(word, lines)| {
+            (
+                word,
+                lines
+                    .into_iter()
+                    .map(|line| word_key_for_each_deleted_line[line])
+                    .collect::<Vec<WordKey>>(),
+            )
+        })
+        .collect::<Vec<(&str, Vec<WordKey>)>>();
+
+        document.remove_words(commit_index, &word_to_lines);
     }
+
+    fn delete_entire_file(
+        &mut self,
+        commit_index: CommitIndex,
+        file_id: FileId,
+    ) {
+        let diff_tracker = self.file_id_to_diff_tracker.get_mut(&file_id);
+        assert!(diff_tracker.is_some());
+
+        let diff_tracker = diff_tracker.unwrap();
+        diff_tracker.delete_all();
+
+        let document = self.file_id_to_document.get_mut(&file_id);
+        assert!(document.is_some());
+
+        let document = document.unwrap();
+        document.remove_document(commit_index);
+    }
+}
+
+fn flatten_delete_result(delete_results: &[LineDeleteResult]) -> Vec<WordKey> {
+    let mut delete_result_per_line = Vec::<WordKey>::with_capacity(
+        delete_results
+            .iter()
+            .map(|r| r.start_and_end.1 - r.start_and_end.0)
+            .sum(),
+    );
+
+    for delete_result in delete_results {
+        let (start, end) = delete_result.start_and_end;
+        for i in start..end {
+            delete_result_per_line.push(WordKey {
+                commit_id: delete_result.commit_id,
+                line: i,
+            })
+        }
+    }
+
+    delete_result_per_line
 }
 
 #[derive(Debug)]
@@ -456,4 +529,5 @@ struct GitDelta {
     new_line_count: u32,
 
     added_lines: Vec<String>,
+    deleted_lines: Vec<String>,
 }

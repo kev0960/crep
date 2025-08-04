@@ -29,14 +29,17 @@ impl<'i> Searcher<'i> {
             .collect();
 
         // Now select the document that contains
-        let raw_search_results = Searcher::combine_search_result(&word_search_results);
+        let raw_search_results =
+            Searcher::combine_search_result(&word_search_results);
 
         let mut search_result = vec![];
         for result in raw_search_results {
             let files = result
                 .file_indexes
                 .iter()
-                .map(|index| (self.index.files[*index as usize].clone(), *index as usize))
+                .map(|index| {
+                    (self.index.files[*index as usize].clone(), *index as usize)
+                })
                 .collect();
 
             search_result.push(SearchResult {
@@ -67,7 +70,8 @@ impl<'i> Searcher<'i> {
             for (index, perm_idx) in permutation.iter().enumerate() {
                 let current_list = &word_search_results[index];
 
-                selected_words.push(current_list[*perm_idx as usize].0.as_str());
+                selected_words
+                    .push(current_list[*perm_idx as usize].0.as_str());
                 selected_bitmaps.push(&current_list[*perm_idx as usize].1);
             }
 

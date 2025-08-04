@@ -25,7 +25,9 @@ impl Indexer {
         match git2::Repository::open(Path::new(&self.root_dir)) {
             Ok(repo) => GitIndexer::new().index_history(repo).unwrap(),
             Err(_) => {
-                println!("Non Git-directory. Only indexing the current directory.");
+                println!(
+                    "Non Git-directory. Only indexing the current directory."
+                );
                 self.index_directory();
             }
         }
@@ -177,7 +179,10 @@ mod tests {
                 ),
                 (
                     1,
-                    HashMap::from_iter(vec![("export".to_owned(), vec![(0, 0)]),])
+                    HashMap::from_iter(vec![(
+                        "export".to_owned(),
+                        vec![(0, 0)]
+                    ),])
                 ),
                 (
                     2,

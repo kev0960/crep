@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.98"
+clap = { version = "4.5.42", features = ["derive"] }
 fst = { version = "0.4", features = ["levenshtein"] }
 ftree = "1.2.0"
 git2 = "0.20.2"

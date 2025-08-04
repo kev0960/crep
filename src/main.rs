@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 
+use clap::Parser;
 use index::indexer::Indexer;
 use result_viewer::SearchResultViewer;
 use searcher::Searcher;
@@ -10,8 +11,18 @@ mod result_viewer;
 mod searcher;
 mod tokenizer;
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Path to index.
+    #[arg(short, long)]
+    path: String,
+}
+
 fn main() {
-    let indexer = Indexer::new("/home/jaebum/learn/search");
+    let args = Args::parse();
+
+    let indexer = Indexer::new(&args.path);
     indexer.index();
 
     /*
