@@ -1,7 +1,11 @@
 use std::io::{self, Write};
 
 use clap::Parser;
-use index::indexer::Indexer;
+use git_searcher::GitSearcher;
+use index::{
+    git_index::GitIndex,
+    indexer::{IndexResult, Indexer},
+};
 use result_viewer::SearchResultViewer;
 use searcher::Searcher;
 
@@ -9,6 +13,7 @@ mod git;
 mod git_searcher;
 mod index;
 mod result_viewer;
+mod search;
 mod searcher;
 mod tokenizer;
 
@@ -24,7 +29,14 @@ fn main() {
     let args = Args::parse();
 
     let indexer = Indexer::new(&args.path);
-    indexer.index();
+    let index = indexer.index().unwrap();
+
+    match index {
+        IndexResult::GitIndex(index) => {
+            handle_query(index);
+        }
+        _ => {}
+    }
 
     /*
         let indexer = Indexer::new("/home/jaebum/Halfmore");
@@ -54,4 +66,25 @@ fn main() {
             );
         }
     */
+}
+
+fn handle_query(index: GitIndex) {
+    let searcher = GitSearcher::new(&index);
+
+    loop {
+        print!("Query :: ");
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+
+        let input = input.trim();
+
+        if input.is_empty() {
+            break;
+        }
+
+        let results = searcher.search(input);
+        println!("{results:?}");
+    }
 }

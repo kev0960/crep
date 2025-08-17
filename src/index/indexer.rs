@@ -6,12 +6,18 @@ use walkdir::WalkDir;
 use crate::tokenizer::{Tokenizer, WordPosition};
 
 use super::{
+    git_index::GitIndex,
     git_indexer::GitIndexer,
     index::{FileToWordPos, Index},
 };
 
 pub struct Indexer {
     root_dir: String,
+}
+
+pub enum IndexResult {
+    GitIndex(GitIndex),
+    Index(Index),
 }
 
 impl Indexer {
@@ -21,14 +27,20 @@ impl Indexer {
         }
     }
 
-    pub fn index(&self) {
+    pub fn index(&self) -> anyhow::Result<IndexResult> {
         match git2::Repository::open(Path::new(&self.root_dir)) {
-            Ok(repo) => GitIndexer::new().index_history(repo).unwrap(),
+            Ok(repo) => {
+                let mut indexer = GitIndexer::new();
+                indexer.index_history(repo)?;
+
+                Ok(IndexResult::GitIndex(GitIndex::build(indexer)))
+            }
             Err(_) => {
                 println!(
                     "Non Git-directory. Only indexing the current directory."
                 );
-                self.index_directory();
+
+                Ok(IndexResult::Index(self.index_directory()))
             }
         }
     }

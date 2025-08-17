@@ -39,16 +39,15 @@ impl PartialOrd for CommitEndPriority {
 #[derive(Default, Debug, PartialEq)]
 pub struct WordIndex {
     // PQ where CommitEndPriority refers to the last commit that the word was used.
-    word_history: PriorityQueue<WordKey, CommitEndPriority>,
+    pub word_history: PriorityQueue<WordKey, CommitEndPriority>,
 
     // Whether the specific word is included in a given commit.
-    commit_inclutivity: RoaringBitmap,
+    pub commit_inclutivity: RoaringBitmap,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Document {
-    words: HashMap<String, WordIndex>,
-    words_in_commit_window: Vec<HashSet<String>>,
+    pub words: HashMap<String, WordIndex>,
 }
 
 impl Document {

@@ -14,22 +14,17 @@ pub type CommitIndex = usize;
 pub type FileId = usize;
 
 pub struct GitIndexer {
-    commit_index_to_commit_id: Vec<[u8; 20]>,
-    commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
+    pub commit_index_to_commit_id: Vec<[u8; 20]>,
+    pub commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
 
     file_name_to_id: HashMap<String, FileId>,
-    file_id_to_name: Vec<String>,
+    pub file_id_to_name: Vec<String>,
     file_id_to_diff_tracker: HashMap<FileId, FileDiffTracker>,
 
-    file_id_to_document: HashMap<FileId, Document>,
+    pub file_id_to_document: HashMap<FileId, Document>,
 
     // RoaringBitmap is set if the corresponding file id contains the word.
-
-    // Check the words in the last commit, if the word exists then this bit is set.
-    word_to_file_id_last_commit: HashMap<String, RoaringBitmap>,
-
-    // Check the words in the last 10 commits, and if the word exists then this bit is set.
-    word_to_file_id_last_10_commits: HashMap<String, RoaringBitmap>,
+    pub word_to_file_id_ever_contained: HashMap<String, RoaringBitmap>,
 }
 
 #[derive(Debug)]
@@ -47,8 +42,7 @@ impl GitIndexer {
             file_id_to_name: Vec::new(),
             file_id_to_diff_tracker: HashMap::new(),
             file_id_to_document: HashMap::new(),
-            word_to_file_id_last_commit: HashMap::new(),
-            word_to_file_id_last_10_commits: HashMap::new(),
+            word_to_file_id_ever_contained: HashMap::new(),
         }
     }
 
@@ -441,6 +435,13 @@ impl GitIndexer {
             .file_id_to_document
             .entry(file_id)
             .or_insert(Document::new());
+
+        for word in word_to_lines.keys() {
+            self.word_to_file_id_ever_contained
+                .entry(word.to_string())
+                .or_default()
+                .insert(file_id as u32);
+        }
 
         document.add_words(commit_index, word_to_lines);
     }
