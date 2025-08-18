@@ -6,8 +6,7 @@ use index::{
     git_index::GitIndex,
     indexer::{IndexResult, Indexer},
 };
-use result_viewer::SearchResultViewer;
-use searcher::Searcher;
+use search::result_viewer::GitSearchResultViewer;
 
 mod git;
 mod git_searcher;
@@ -33,7 +32,7 @@ fn main() {
 
     match index {
         IndexResult::GitIndex(index) => {
-            handle_query(index);
+            handle_query(index, &args.path);
         }
         _ => {}
     }
@@ -68,8 +67,9 @@ fn main() {
     */
 }
 
-fn handle_query(index: GitIndex) {
+fn handle_query(index: GitIndex, path: &str) {
     let searcher = GitSearcher::new(&index);
+    let viewer = GitSearchResultViewer::new(path, &index);
 
     loop {
         print!("Query :: ");
@@ -85,6 +85,6 @@ fn handle_query(index: GitIndex) {
         }
 
         let results = searcher.search(input);
-        println!("{results:?}");
+        viewer.show_results(&results).unwrap();
     }
 }

@@ -12,7 +12,7 @@ pub struct GitIndex {
     pub commit_index_to_commit_id: Vec<[u8; 20]>,
     pub commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
 
-    pub file_id_to_name: Vec<String>,
+    pub file_id_to_path: Vec<String>,
 
     pub file_id_to_document: HashMap<FileId, Document>,
     pub word_to_file_id_ever_contained: HashMap<String, RoaringBitmap>,
@@ -35,7 +35,7 @@ impl GitIndex {
         Self {
             commit_index_to_commit_id: indexer.commit_index_to_commit_id,
             commit_id_to_commit_index: indexer.commit_id_to_commit_index,
-            file_id_to_name: indexer.file_id_to_name,
+            file_id_to_path: indexer.file_id_to_path,
             file_id_to_document: indexer.file_id_to_document,
             word_to_file_id_ever_contained: indexer
                 .word_to_file_id_ever_contained,

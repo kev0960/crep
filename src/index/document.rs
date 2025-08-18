@@ -17,7 +17,7 @@ pub struct WordKey {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct CommitEndPriority(Option<usize>);
+pub struct CommitEndPriority(Option<usize>);
 
 impl Ord for CommitEndPriority {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -162,6 +162,29 @@ impl Document {
                     word_index
                         .commit_inclutivity
                         .insert(end_commit_index as u32);
+                }
+            }
+        }
+    }
+
+    pub fn finalize(&mut self, commit_index: CommitIndex) {
+        for index in self.words.values_mut() {
+            if index.commit_inclutivity.contains(commit_index as u32) {
+                continue;
+            }
+
+            if let Some((_, CommitEndPriority(None))) =
+                index.word_history.peek()
+            {
+                match index.commit_inclutivity.max() {
+                    Some(last_enabled_bit) => {
+                        index.commit_inclutivity.insert_range(
+                            last_enabled_bit..((commit_index + 1) as u32),
+                        );
+                    }
+                    _ => {
+                        index.commit_inclutivity.insert(commit_index as u32);
+                    }
                 }
             }
         }

@@ -18,7 +18,7 @@ pub struct GitIndexer {
     pub commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
 
     file_name_to_id: HashMap<String, FileId>,
-    pub file_id_to_name: Vec<String>,
+    pub file_id_to_path: Vec<String>,
     file_id_to_diff_tracker: HashMap<FileId, FileDiffTracker>,
 
     pub file_id_to_document: HashMap<FileId, Document>,
@@ -39,7 +39,7 @@ impl GitIndexer {
             commit_index_to_commit_id: Vec::new(),
             commit_id_to_commit_index: HashMap::new(),
             file_name_to_id: HashMap::new(),
-            file_id_to_name: Vec::new(),
+            file_id_to_path: Vec::new(),
             file_id_to_diff_tracker: HashMap::new(),
             file_id_to_document: HashMap::new(),
             word_to_file_id_ever_contained: HashMap::new(),
@@ -56,7 +56,7 @@ impl GitIndexer {
                 let file_id = self.file_name_to_id.len();
                 self.file_name_to_id
                     .insert(file_full_path.to_owned(), file_id);
-                self.file_id_to_name.push(file_full_path.to_owned());
+                self.file_id_to_path.push(file_full_path.to_owned());
                 file_id
             }
         }
@@ -101,10 +101,14 @@ impl GitIndexer {
             for (file_id, diff_tracker) in self.file_id_to_diff_tracker.iter() {
                 println!(
                     "File name: {:?} {:?}",
-                    self.file_id_to_name.get(*file_id),
+                    self.file_id_to_path.get(*file_id),
                     diff_tracker
                 );
             }
+        }
+
+        for document in self.file_id_to_document.values_mut() {
+            document.finalize(self.commit_index_to_commit_id.len() - 1);
         }
 
         Ok(())

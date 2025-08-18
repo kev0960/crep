@@ -666,6 +666,7 @@ dependencies = [
 name = "search"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "clap",
  "fst",
