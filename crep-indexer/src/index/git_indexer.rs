@@ -13,6 +13,7 @@ use super::document::{Document, WordKey};
 pub type CommitIndex = usize;
 pub type FileId = usize;
 
+#[derive(Default)]
 pub struct GitIndexer {
     pub commit_index_to_commit_id: Vec<[u8; 20]>,
     pub commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
@@ -35,15 +36,7 @@ struct CurrentGitDiffFile {
 
 impl GitIndexer {
     pub fn new() -> Self {
-        Self {
-            commit_index_to_commit_id: Vec::new(),
-            commit_id_to_commit_index: HashMap::new(),
-            file_name_to_id: HashMap::new(),
-            file_id_to_path: Vec::new(),
-            file_id_to_diff_tracker: HashMap::new(),
-            file_id_to_document: HashMap::new(),
-            word_to_file_id_ever_contained: HashMap::new(),
-        }
+        Self::default()
     }
 
     fn get_file_id_insert_if_missing(
@@ -98,6 +91,7 @@ impl GitIndexer {
                 self.index_tree(&0, last_tree.as_ref().unwrap(), &repo)?;
             }
 
+            /*
             for (file_id, diff_tracker) in self.file_id_to_diff_tracker.iter() {
                 println!(
                     "File name: {:?} {:?}",
@@ -105,6 +99,7 @@ impl GitIndexer {
                     diff_tracker
                 );
             }
+            */
         }
 
         for document in self.file_id_to_document.values_mut() {
