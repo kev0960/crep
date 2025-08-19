@@ -1,20 +1,14 @@
 use std::io::{self, Write};
 
 use clap::Parser;
-use git_searcher::GitSearcher;
-use index::{
-    git_index::GitIndex,
-    indexer::{IndexResult, Indexer},
+use crep_indexer::{
+    git_searcher::GitSearcher,
+    index::{
+        git_index::GitIndex,
+        indexer::{IndexResult, Indexer},
+    },
+    search::result_viewer::GitSearchResultViewer,
 };
-use search::result_viewer::GitSearchResultViewer;
-
-mod git;
-mod git_searcher;
-mod index;
-mod result_viewer;
-mod search;
-mod searcher;
-mod tokenizer;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
