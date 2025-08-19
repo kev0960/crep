@@ -1,3 +1,4 @@
+use core::num;
 use std::{cell::RefCell, collections::HashMap};
 
 use crate::{
@@ -6,6 +7,7 @@ use crate::{
 };
 use anyhow::Result;
 use git2::{Delta, ObjectType, Repository, Sort, Tree, TreeWalkResult};
+use indicatif::{ProgressBar, ProgressStyle};
 use roaring::RoaringBitmap;
 
 use super::document::{Document, WordKey};
@@ -15,6 +17,8 @@ pub type FileId = usize;
 
 #[derive(Default)]
 pub struct GitIndexer {
+    config: GitIndexerConfig,
+
     pub commit_index_to_commit_id: Vec<[u8; 20]>,
     pub commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
 
@@ -34,9 +38,17 @@ struct CurrentGitDiffFile {
     status: Delta,
 }
 
+#[derive(Debug, Default)]
+pub struct GitIndexerConfig {
+    pub show_index_progress: bool,
+}
+
 impl GitIndexer {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(config: GitIndexerConfig) -> Self {
+        Self {
+            config,
+            ..Default::default()
+        }
     }
 
     fn get_file_id_insert_if_missing(
@@ -62,12 +74,29 @@ impl GitIndexer {
         revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::REVERSE)?;
 
         let mut last_tree: Option<Tree> = None;
+        let bar = match self.config.show_index_progress {
+            true => {
+                let num_commits = count_number_of_commits(&repo)?;
+                let bar = ProgressBar::new(num_commits as u64);
+                bar.set_style(ProgressStyle::default_bar().template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>7}/{len:7} {msg}"
+                ).unwrap());
+
+                Some(bar)
+            }
+            false => None,
+        };
 
         for old_result in revwalk {
             let old = old_result?;
             let commit = repo.find_commit(old)?;
 
-            println!("Commit {}", commit.id());
+            if let Some(bar) = &bar {
+                bar.set_message(commit.id().to_string());
+                bar.inc(1);
+            } else {
+                println!("Commit {}", commit.id());
+            }
 
             let mut commit_id = [0u8; 20];
             commit_id.copy_from_slice(commit.id().as_bytes());
@@ -529,6 +558,17 @@ fn flatten_delete_result(delete_results: &[LineDeleteResult]) -> Vec<WordKey> {
     }
 
     delete_result_per_line
+}
+
+fn count_number_of_commits(repo: &Repository) -> Result<usize> {
+    let mut revwalk = repo.revwalk()?;
+
+    revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+    revwalk.push_ref("refs/heads/main")?;
+
+    revwalk.simplify_first_parent()?;
+
+    Ok(revwalk.count())
 }
 
 #[derive(Debug)]

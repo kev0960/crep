@@ -7,7 +7,7 @@ use crate::tokenizer::{Tokenizer, WordPosition};
 
 use super::{
     git_index::GitIndex,
-    git_indexer::GitIndexer,
+    git_indexer::{GitIndexer, GitIndexerConfig},
     index::{FileToWordPos, Index},
 };
 
@@ -30,7 +30,9 @@ impl Indexer {
     pub fn index(&self) -> anyhow::Result<IndexResult> {
         match git2::Repository::open(Path::new(&self.root_dir)) {
             Ok(repo) => {
-                let mut indexer = GitIndexer::new();
+                let mut indexer = GitIndexer::new(GitIndexerConfig {
+                    show_index_progress: true,
+                });
                 indexer.index_history(repo)?;
 
                 Ok(IndexResult::GitIndex(GitIndex::build(indexer)))
