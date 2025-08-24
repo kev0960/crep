@@ -1,2 +1,3 @@
 [workspace]
 members = ["crep-indexer", "crep-indexer-cli", "crep-server"]
+resolver = "3"

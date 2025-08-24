@@ -1,21 +1,23 @@
-use core::num;
-use std::{cell::RefCell, collections::HashMap};
-
 use crate::{
     git::diff::{FileDiffTracker, LineDeleteResult},
     tokenizer::{Tokenizer, WordPosition},
 };
 use anyhow::Result;
-use git2::{Delta, ObjectType, Repository, Sort, Tree, TreeWalkResult};
+use git2::{
+    Delta, DiffFlags, ObjectType, Repository, Sort, Tree, TreeWalkResult,
+};
 use indicatif::{ProgressBar, ProgressStyle};
 use roaring::RoaringBitmap;
+use std::{cell::RefCell, collections::HashMap, path::Path};
 
-use super::document::{Document, WordKey};
+use super::{
+    check_binary::Utf8FileChecker,
+    document::{Document, WordKey},
+};
 
 pub type CommitIndex = usize;
 pub type FileId = usize;
 
-#[derive(Default)]
 pub struct GitIndexer {
     config: GitIndexerConfig,
 
@@ -30,6 +32,8 @@ pub struct GitIndexer {
 
     // RoaringBitmap is set if the corresponding file id contains the word.
     pub word_to_file_id_ever_contained: HashMap<String, RoaringBitmap>,
+
+    utf8_file_checker: Utf8FileChecker,
 }
 
 #[derive(Debug)]
@@ -47,7 +51,14 @@ impl GitIndexer {
     pub fn new(config: GitIndexerConfig) -> Self {
         Self {
             config,
-            ..Default::default()
+            utf8_file_checker: Utf8FileChecker::new().unwrap(),
+            commit_index_to_commit_id: Vec::new(),
+            commit_id_to_commit_index: HashMap::new(),
+            file_name_to_id: HashMap::new(),
+            file_id_to_path: Vec::new(),
+            file_id_to_diff_tracker: HashMap::new(),
+            file_id_to_document: HashMap::new(),
+            word_to_file_id_ever_contained: HashMap::new(),
         }
     }
 
@@ -119,20 +130,36 @@ impl GitIndexer {
                 last_tree = Some(tree);
                 self.index_tree(&0, last_tree.as_ref().unwrap(), &repo)?;
             }
-
-            /*
-            for (file_id, diff_tracker) in self.file_id_to_diff_tracker.iter() {
-                println!(
-                    "File name: {:?} {:?}",
-                    self.file_id_to_path.get(*file_id),
-                    diff_tracker
-                );
-            }
-            */
         }
 
-        for document in self.file_id_to_document.values_mut() {
+        if let Some(bar) = &bar {
+            bar.finish();
+        }
+
+        let bar = match self.config.show_index_progress {
+            true => {
+                let bar =
+                    ProgressBar::new(self.file_id_to_document.len() as u64);
+                bar.set_style(ProgressStyle::default_bar().template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>7}/{len:7} {msg}"
+                ).unwrap());
+
+                Some(bar)
+            }
+            false => None,
+        };
+
+        for (file_id, document) in self.file_id_to_document.iter_mut() {
             document.finalize(self.commit_index_to_commit_id.len() - 1);
+
+            if let Some(bar) = &bar {
+                bar.set_message(format!(
+                    "Finalizing: {}",
+                    self.file_id_to_path.get(*file_id).unwrap(),
+                ));
+
+                bar.inc(1);
+            }
         }
 
         Ok(())
@@ -161,6 +188,11 @@ impl GitIndexer {
 
         diff.foreach(
             &mut |delta, _| {
+                // Ignore binary files.
+                if delta.flags().contains(DiffFlags::BINARY) {
+                    return true;
+                }
+
                 let mut file_delta = file_delta.borrow_mut();
                 let mut current_diff_file = current_diff_file.borrow_mut();
 
@@ -285,6 +317,19 @@ impl GitIndexer {
                         Ok(blob) => blob,
                         Err(_) => return TreeWalkResult::Ok,
                     };
+
+                    let file_ext = Path::new(name)
+                        .extension()
+                        .unwrap_or_default()
+                        .to_str()
+                        .unwrap();
+
+                    if !self
+                        .utf8_file_checker
+                        .is_utf8_document(blob.content(), file_ext)
+                    {
+                        return TreeWalkResult::Ok;
+                    }
 
                     let content = std::str::from_utf8(blob.content()).unwrap();
                     let file_name = &format!("{root}{name}");
