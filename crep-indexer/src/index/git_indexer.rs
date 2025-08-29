@@ -1,6 +1,6 @@
 use crate::{
     git::diff::{FileDiffTracker, LineDeleteResult},
-    tokenizer::{Tokenizer, WordPosition},
+    tokenizer::{Tokenizer, TokenizerMethod, WordPosition},
 };
 use anyhow::Result;
 use git2::{
@@ -496,9 +496,12 @@ impl GitIndexer {
         }
 
         // Now index those new lines.
-        let tokens =
-            Tokenizer::split_lines_to_word_line_only(lines, new_line_start)
-                .word_pos;
+        let tokens = Tokenizer::split_lines_to_tokens(
+            lines,
+            new_line_start,
+            TokenizerMethod::Trigram,
+        )
+        .word_pos;
         let word_to_lines = match tokens {
             WordPosition::LineNumOnlyWithDedup(word_to_lines) => word_to_lines,
             _ => panic!(),
@@ -541,8 +544,10 @@ impl GitIndexer {
 
         let document = document.unwrap();
 
-        let tokens = Tokenizer::split_lines_to_word_line_only(
-            lines, /*new_line_start=*/ 0,
+        let tokens = Tokenizer::split_lines_to_tokens(
+            lines,
+            /*new_line_start=*/ 0,
+            TokenizerMethod::Trigram,
         )
         .word_pos;
 

@@ -2,6 +2,11 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 pub struct Tokenizer {}
 
+pub enum TokenizerMethod {
+    WordOnlyIgnoreWhiteSpaceAndPunctuation = 1,
+    Trigram = 2,
+}
+
 impl Tokenizer {
     pub fn new() -> Self {
         Tokenizer {}
@@ -40,33 +45,32 @@ impl Tokenizer {
         }
     }
 
-    pub fn split_lines_to_word_line_only(
+    pub fn split_lines_to_tokens(
         lines: &[String],
         line_start_index: usize,
+        method: TokenizerMethod,
     ) -> TokenizerResult {
         let mut total_words = HashSet::new();
         let mut word_pos: HashMap<&str, BTreeSet<usize>> = HashMap::new();
 
         for (line_num, line) in lines.iter().enumerate() {
-            let mut start = 0;
-            for (i, c) in line.char_indices() {
-                if c.is_ascii_punctuation() || c.is_ascii_whitespace() {
-                    if i > start {
-                        let word = &line[start..i];
-                        total_words.insert(word);
-                        word_pos.entry(word).or_default().insert(line_num);
-                    }
-                    start = i + c.len_utf8()
+            match method {
+                TokenizerMethod::WordOnlyIgnoreWhiteSpaceAndPunctuation => {
+                    split_by_word(
+                        line,
+                        &mut total_words,
+                        &mut word_pos,
+                        line_num + line_start_index,
+                    );
                 }
-            }
-
-            if start < line.len() {
-                let word = &line[start..];
-                total_words.insert(word);
-                word_pos
-                    .entry(word)
-                    .or_default()
-                    .insert(line_num + line_start_index);
+                TokenizerMethod::Trigram => {
+                    split_by_trigram(
+                        line,
+                        &mut total_words,
+                        &mut word_pos,
+                        line_num + line_start_index,
+                    );
+                }
             }
         }
 
@@ -79,6 +83,50 @@ impl Tokenizer {
                     .collect(),
             ),
         }
+    }
+}
+
+fn split_by_word<'a>(
+    line: &'a str,
+    total_words: &mut HashSet<&'a str>,
+    word_pos: &mut HashMap<&'a str, BTreeSet<usize>>,
+    line_num: usize,
+) {
+    let mut start = 0;
+    for (i, c) in line.char_indices() {
+        if c.is_ascii_punctuation() || c.is_ascii_whitespace() {
+            if i > start {
+                let word = &line[start..i];
+                total_words.insert(word);
+                word_pos.entry(word).or_default().insert(line_num);
+            }
+            start = i + c.len_utf8()
+        }
+    }
+
+    if start < line.len() {
+        let word = &line[start..];
+        total_words.insert(word);
+        word_pos.entry(word).or_default().insert(line_num);
+    }
+}
+
+fn split_by_trigram<'a>(
+    line: &'a str,
+    total_words: &mut HashSet<&'a str>,
+    word_pos: &mut HashMap<&'a str, BTreeSet<usize>>,
+    line_num: usize,
+) {
+    let mut indexes = [0, 0, 0] as [usize; 3];
+
+    for (count, (index, c)) in line.char_indices().enumerate() {
+        let start = indexes[(count + 1) % 3];
+        let word = &line[start..index + c.len_utf8()];
+
+        total_words.insert(word);
+        word_pos.entry(word).or_default().insert(line_num);
+
+        indexes[count % 3] = index;
     }
 }
 
@@ -176,15 +224,74 @@ mod tests {
     }
 
     #[test]
-    fn test_emoji_words() {
-        let result =
-            Tokenizer::split_to_words_with_col("⚠️  **Important Disclosure**");
-        assert_eq!(result.total_words, HashSet::from_iter(vec!["a", "ab"]));
+    fn word_only_ignore_space_and_punctuation() {
+        let lines = vec!["a bc def".to_owned(), "this is a word".to_owned()];
+
+        let result = Tokenizer::split_lines_to_tokens(
+            &lines,
+            1,
+            TokenizerMethod::WordOnlyIgnoreWhiteSpaceAndPunctuation,
+        );
+
+        assert_eq!(
+            result.total_words,
+            HashSet::from_iter(vec![
+                "a", "bc", "def", "this", "is", "a", "word"
+            ])
+        );
         assert_eq!(
             result.word_pos,
-            WordPosition::LineNumWithColNoDedup(HashMap::from_iter(vec![
-                ("a", vec![(0, 0), (0, 5)]),
-                ("ab", vec![(0, 2)]),
+            WordPosition::LineNumOnlyWithDedup(HashMap::from_iter(vec![
+                ("a", vec![1, 2]),
+                ("bc", vec![1]),
+                ("def", vec![1]),
+                ("this", vec![2]),
+                ("is", vec![2]),
+                ("word", vec![2])
+            ]))
+        );
+    }
+
+    #[test]
+    fn trigram() {
+        let lines = vec![
+            "".to_owned(),
+            "a".to_owned(),
+            "ab".to_owned(),
+            "abc".to_owned(),
+            "1234".to_owned(),
+            "56789".to_owned(),
+        ];
+
+        let result = Tokenizer::split_lines_to_tokens(
+            &lines,
+            1,
+            TokenizerMethod::Trigram,
+        );
+
+        assert_eq!(
+            result.total_words,
+            HashSet::from_iter(vec![
+                "a", "ab", "abc", "1", "12", "123", "234", "5", "56", "567",
+                "678", "789"
+            ])
+        );
+
+        assert_eq!(
+            result.word_pos,
+            WordPosition::LineNumOnlyWithDedup(HashMap::from_iter(vec![
+                ("a", vec![2, 3, 4]),
+                ("ab", vec![3, 4]),
+                ("abc", vec![4]),
+                ("1", vec![5]),
+                ("12", vec![5]),
+                ("123", vec![5]),
+                ("234", vec![5]),
+                ("5", vec![6]),
+                ("56", vec![6]),
+                ("567", vec![6]),
+                ("678", vec![6]),
+                ("789", vec![6])
             ]))
         );
     }
