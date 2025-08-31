@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use fst::{IntoStreamer, automaton::Levenshtein};
+use fst::IntoStreamer;
 use regex_automata::dense;
 use roaring::RoaringBitmap;
 
 use crate::{
     index::{git_index::GitIndex, git_indexer::FileId},
     search::permutation::PermutationIterator,
-    searcher::intersect_bitmaps,
-    tokenizer::{Tokenizer, TokenizerMethod, TokenizerResult},
+    tokenizer::{Tokenizer, TokenizerMethod},
+    util::bitmap::intersect::intersect_bitmaps,
 };
 
 pub struct GitSearcher<'i> {
@@ -46,7 +46,6 @@ impl<'i> GitSearcher<'i> {
             let overlapping_commits =
                 self.find_overlapping_commit_history(result);
 
-            println!("Overlap commits {:?} {:?}", overlapping_commits, result);
             for (file_id, commit_overlap) in overlapping_commits {
                 search_result.push(RawPerFileSearchResult {
                     file_id,

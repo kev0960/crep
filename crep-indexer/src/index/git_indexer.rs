@@ -45,6 +45,7 @@ struct CurrentGitDiffFile {
 #[derive(Debug, Default)]
 pub struct GitIndexerConfig {
     pub show_index_progress: bool,
+    pub main_branch_name: String,
 }
 
 impl GitIndexer {
@@ -87,7 +88,11 @@ impl GitIndexer {
         let mut last_tree: Option<Tree> = None;
         let bar = match self.config.show_index_progress {
             true => {
-                let num_commits = count_number_of_commits(&repo)?;
+                let num_commits = count_number_of_commits(
+                    &repo,
+                    &self.config.main_branch_name,
+                )?;
+
                 let bar = ProgressBar::new(num_commits as u64);
                 bar.set_style(ProgressStyle::default_bar().template(
                     "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>7}/{len:7} {msg}"
@@ -507,11 +512,7 @@ impl GitIndexer {
             _ => panic!(),
         };
 
-        let document = self
-            .file_id_to_document
-            .entry(file_id)
-            .or_insert(Document::new());
-
+        let document = self.file_id_to_document.entry(file_id).or_default();
         for word in word_to_lines.keys() {
             self.word_to_file_id_ever_contained
                 .entry(word.to_string())
@@ -610,11 +611,14 @@ fn flatten_delete_result(delete_results: &[LineDeleteResult]) -> Vec<WordKey> {
     delete_result_per_line
 }
 
-fn count_number_of_commits(repo: &Repository) -> Result<usize> {
+fn count_number_of_commits(
+    repo: &Repository,
+    main_branch_name: &str,
+) -> Result<usize> {
     let mut revwalk = repo.revwalk()?;
 
     revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
-    revwalk.push_ref("refs/heads/main")?;
+    revwalk.push_ref(&format!("refs/heads/{main_branch_name}"))?;
 
     revwalk.simplify_first_parent()?;
 

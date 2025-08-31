@@ -13,6 +13,7 @@ use super::{
 
 pub struct Indexer {
     root_dir: String,
+    main_branch_name: Option<String>,
 }
 
 pub enum IndexResult {
@@ -20,10 +21,16 @@ pub enum IndexResult {
     Index(Index),
 }
 
+pub struct IndexerConfig<'a> {
+    pub root_dir: &'a str,
+    pub main_branch_name: Option<&'a str>,
+}
+
 impl Indexer {
-    pub fn new(root_dir: &str) -> Self {
+    pub fn new(config: &IndexerConfig) -> Self {
         Indexer {
-            root_dir: root_dir.to_string(),
+            root_dir: config.root_dir.to_string(),
+            main_branch_name: config.main_branch_name.map(|b| b.to_owned()),
         }
     }
 
@@ -32,6 +39,11 @@ impl Indexer {
             Ok(repo) => {
                 let mut indexer = GitIndexer::new(GitIndexerConfig {
                     show_index_progress: true,
+                    main_branch_name: self
+                        .main_branch_name
+                        .as_ref()
+                        .unwrap_or(&"main".to_owned())
+                        .to_owned(),
                 });
                 indexer.index_history(repo)?;
 
@@ -155,7 +167,10 @@ mod tests {
 
     #[test]
     fn test_indexing_directory() {
-        let indexer = Indexer::new(&append_test_dir_path("test_data/indexer"));
+        let indexer = Indexer::new(&IndexerConfig {
+            root_dir: &append_test_dir_path("test_data/indexer"),
+            main_branch_name: None,
+        });
         let index = indexer.index_directory();
 
         let mut files_indexed = index.files.clone();

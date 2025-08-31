@@ -6,6 +6,7 @@ use std::{
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use git2::{Oid, Repository};
+use owo_colors::OwoColorize;
 use roaring::RoaringBitmap;
 
 use crate::{
@@ -32,8 +33,18 @@ impl<'i> GitSearchResultViewer<'i> {
         &self,
         results: &[RawPerFileSearchResult],
     ) -> Result<()> {
-        for (index, result) in results.iter().enumerate() {
-            println!("{}\n\n", self.show_result(index + 1, result)?);
+        let mut index = 0;
+        for result in results {
+            let result = self.show_result(index + 1, result);
+            if let Some(result) = result? {
+                println!("{result}\n\n");
+                index += 1;
+            }
+
+            if index >= 1000 {
+                println!("Too many results.. return");
+                break;
+            }
         }
 
         Ok(())
@@ -43,11 +54,11 @@ impl<'i> GitSearchResultViewer<'i> {
         &self,
         index: usize,
         result: &RawPerFileSearchResult,
-    ) -> Result<String> {
+    ) -> Result<Option<String>> {
         let first_commit_introduced = result.overapped_commits.min();
 
         if first_commit_introduced.is_none() {
-            return Ok("".to_string());
+            return Ok(None);
         }
 
         let file_content = self
@@ -62,8 +73,14 @@ impl<'i> GitSearchResultViewer<'i> {
         let matches =
             self.find_matches_in_document(&result.words, &file_content)?;
 
+        if matches.len() != result.words.len() {
+            // Not every words are found in the document.
+            return Ok(None);
+        }
+
         let mut line_to_words: HashMap<usize, Vec<(&str, usize)>> =
             HashMap::new();
+
         for (k, (line_num, col_num)) in &matches {
             line_to_words
                 .entry(*line_num)
@@ -83,10 +100,14 @@ impl<'i> GitSearchResultViewer<'i> {
             })
             .collect::<BTreeSet<usize>>();
 
+        if lines_to_show.is_empty() {
+            return Ok(None);
+        }
+
         let mut result = format!(
             "{index}. Found words {} at {}\n",
-            result.words.join(","),
-            self.index.file_id_to_path[result.file_id as usize]
+            result.words.join(",").red(),
+            self.index.file_id_to_path[result.file_id as usize].yellow()
         );
 
         let mut prev_line_num = None;
@@ -116,7 +137,7 @@ impl<'i> GitSearchResultViewer<'i> {
             prev_line_num = Some(line_num);
         }
 
-        Ok(result)
+        Ok(Some(result))
     }
 
     fn read_file_at_commit(
@@ -160,14 +181,10 @@ impl<'i> GitSearchResultViewer<'i> {
                     continue;
                 }
 
-                word_pos_found.insert(
-                    m.pattern().as_usize(),
-                    (line_num, m.start() as usize),
-                );
+                word_pos_found
+                    .insert(m.pattern().as_usize(), (line_num, m.start()));
             }
         }
-
-        println!("{word_pos_found:?}");
 
         Ok(word_pos_found
             .into_iter()

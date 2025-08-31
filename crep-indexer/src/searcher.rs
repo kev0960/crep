@@ -7,6 +7,7 @@ use roaring::RoaringBitmap;
 use crate::{
     index::index::Index, result_viewer::SearchResult,
     search::permutation::PermutationIterator,
+    util::bitmap::intersect::intersect_bitmaps,
 };
 
 pub struct Searcher<'i> {
@@ -134,18 +135,6 @@ impl<'i> Searcher<'i> {
 struct RawSearchResult<'s> {
     pub words: Vec<&'s str>,
     pub file_indexes: Vec<u32>,
-}
-
-pub fn intersect_bitmaps(bitmaps: &[&RoaringBitmap]) -> Option<RoaringBitmap> {
-    let mut iter = bitmaps.iter();
-    let first = (*iter.next()?).clone();
-
-    let result = iter.fold(first, |mut total, bitmap| {
-        total &= *bitmap;
-        total
-    });
-
-    Some(result)
 }
 
 #[cfg(test)]

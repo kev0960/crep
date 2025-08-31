@@ -1,11 +1,14 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    path::Path,
+};
 
 use clap::Parser;
 use crep_indexer::{
     git_searcher::GitSearcher,
     index::{
         git_index::GitIndex,
-        indexer::{IndexResult, Indexer},
+        indexer::{IndexResult, Indexer, IndexerConfig},
     },
     search::result_viewer::GitSearchResultViewer,
 };
@@ -16,21 +19,45 @@ struct Args {
     /// Path to index.
     #[arg(short, long)]
     path: String,
+
+    /// Main branch name
+    #[arg(short, long)]
+    main_branch: Option<String>,
+
+    #[arg(short, long)]
+    load_path: Option<String>,
+
+    #[arg(short, long)]
+    save_path: Option<String>,
 }
 
 fn main() {
     let args = Args::parse();
 
-    let indexer = Indexer::new(&args.path);
-    let index = indexer.index().unwrap();
+    let index = match args.load_path {
+        Some(load_path) => GitIndex::load(Path::new(&load_path)).unwrap(),
+        _ => {
+            let indexer = Indexer::new(&IndexerConfig {
+                root_dir: &args.path,
+                main_branch_name: args.main_branch.as_deref(),
+            });
 
-    match index {
-        IndexResult::GitIndex(index) => {
-            handle_query(index, &args.path);
+            let index = indexer.index().unwrap();
+
+            match index {
+                IndexResult::GitIndex(index) => {
+                    if let Some(save_path) = args.save_path {
+                        index.save(std::path::Path::new(&save_path)).unwrap();
+                    }
+
+                    index
+                }
+                _ => panic!("Only Git index is supported"),
+            }
         }
-        _ => {}
-    }
+    };
 
+    handle_query(index, &args.path);
     /*
         let indexer = Indexer::new("/home/jaebum/Halfmore");
         let index = indexer.index_directory();

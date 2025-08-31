@@ -1,4 +1,5 @@
 use priority_queue::PriorityQueue;
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -8,7 +9,7 @@ use roaring::RoaringBitmap;
 
 use super::git_indexer::CommitIndex;
 
-#[derive(Debug, Eq, Hash, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct WordKey {
     pub commit_id: CommitIndex,
 
@@ -16,7 +17,7 @@ pub struct WordKey {
     pub line: usize,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CommitEndPriority(Option<usize>);
 
 impl Ord for CommitEndPriority {
@@ -36,7 +37,7 @@ impl PartialOrd for CommitEndPriority {
     }
 }
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WordIndex {
     // PQ where CommitEndPriority refers to the last commit that the word was used.
     pub word_history: PriorityQueue<WordKey, CommitEndPriority>,
@@ -45,7 +46,7 @@ pub struct WordIndex {
     pub commit_inclutivity: RoaringBitmap,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub words: HashMap<String, WordIndex>,
 }

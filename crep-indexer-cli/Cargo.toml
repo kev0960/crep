@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5.42", features = ["derive"] }
 crep-indexer = { path = "../crep-indexer" }
+
+[profile.release]
+debug = true
+strip = "none"
