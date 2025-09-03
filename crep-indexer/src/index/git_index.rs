@@ -25,7 +25,7 @@ pub struct GitIndex {
     pub file_id_to_document: HashMap<FileId, Document>,
     pub word_to_file_id_ever_contained: HashMap<String, RoaringBitmap>,
 
-    #[serde(with = "fst_set_to_vec")]
+    #[serde(with = "crate::util::serde::fst::fst_set_to_vec")]
     pub all_words: Set<Vec<u8>>,
 }
 
@@ -76,34 +76,6 @@ impl GitIndex {
         )?;
 
         Ok(decoded)
-    }
-}
-
-mod fst_set_to_vec {
-    use super::*;
-    use serde::de::Error as DeError;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(
-        set: &Set<Vec<u8>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let v = set.stream().into_bytes();
-        v.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<Set<Vec<u8>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let v = Vec::<Vec<u8>>::deserialize(deserializer)?;
-        Set::<Vec<u8>>::from_iter(v.iter())
-            .map_err(|e| D::Error::custom(format!("conversion error {e}")))
     }
 }
 

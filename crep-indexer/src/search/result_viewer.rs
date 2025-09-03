@@ -9,12 +9,12 @@ use git2::{Oid, Repository};
 use owo_colors::OwoColorize;
 use roaring::RoaringBitmap;
 
-use crate::{
-    git_searcher::RawPerFileSearchResult,
-    index::{git_index::GitIndex, git_indexer::CommitIndex},
-};
+use crate::index::{git_index::GitIndex, git_indexer::CommitIndex};
 
-use super::line_formatter::highlight_line_by_positions;
+use super::{
+    git_searcher::RawPerFileSearchResult,
+    line_formatter::highlight_line_by_positions,
+};
 
 pub struct GitSearchResultViewer<'i> {
     repo: Repository,
@@ -55,7 +55,7 @@ impl<'i> GitSearchResultViewer<'i> {
         index: usize,
         result: &RawPerFileSearchResult,
     ) -> Result<Option<String>> {
-        let first_commit_introduced = result.overapped_commits.min();
+        let first_commit_introduced = result.overlapped_commits.min();
 
         if first_commit_introduced.is_none() {
             return Ok(None);

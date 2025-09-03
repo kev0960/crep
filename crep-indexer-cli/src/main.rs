@@ -5,12 +5,11 @@ use std::{
 
 use clap::Parser;
 use crep_indexer::{
-    git_searcher::GitSearcher,
     index::{
         git_index::GitIndex,
         indexer::{IndexResult, Indexer, IndexerConfig},
     },
-    search::result_viewer::GitSearchResultViewer,
+    search::{git_searcher::GitSearcher, result_viewer::GitSearchResultViewer},
 };
 
 #[derive(Parser, Debug)]
@@ -89,7 +88,7 @@ fn main() {
 }
 
 fn handle_query(index: GitIndex, path: &str) {
-    let searcher = GitSearcher::new(&index);
+    let mut searcher = GitSearcher::new(&index);
     let viewer = GitSearchResultViewer::new(path, &index);
 
     loop {

@@ -7,7 +7,7 @@ use roaring::RoaringBitmap;
 use crate::{
     index::index::Index, result_viewer::SearchResult,
     search::permutation::PermutationIterator,
-    util::bitmap::intersect::intersect_bitmaps,
+    util::bitmap::utils::intersect_bitmaps,
 };
 
 pub struct Searcher<'i> {

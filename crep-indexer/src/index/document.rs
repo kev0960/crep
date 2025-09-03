@@ -1,3 +1,4 @@
+use fst::Set;
 use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -46,15 +47,19 @@ pub struct WordIndex {
     pub commit_inclutivity: RoaringBitmap,
 }
 
-#[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct Document {
     pub words: HashMap<String, WordIndex>,
+
+    #[serde(with = "crate::util::serde::fst::fst_set_to_vec::option")]
+    pub all_words: Option<Set<Vec<u8>>>,
 }
 
 impl Document {
     pub fn new() -> Self {
         Self {
             words: HashMap::new(),
+            all_words: None,
         }
     }
 
@@ -189,12 +194,37 @@ impl Document {
                 }
             }
         }
+
+        let mut keys = self.words.keys().cloned().collect::<Vec<_>>();
+        keys.sort();
+
+        self.all_words = Some(Set::from_iter(keys).unwrap());
     }
 }
 
 #[cfg(test)]
 mod document_test {
     use super::*;
+
+    impl PartialEq for Document {
+        fn eq(&self, other: &Self) -> bool {
+            if self.words != other.words {
+                return false;
+            }
+
+            let self_words = match &self.all_words {
+                Some(w) => w.stream().into_strs().unwrap(),
+                None => vec![],
+            };
+
+            let other_words = match &self.all_words {
+                Some(w) => w.stream().into_strs().unwrap(),
+                None => vec![],
+            };
+
+            self_words == other_words
+        }
+    }
 
     #[test]
     fn add_words() {
@@ -251,7 +281,8 @@ mod document_test {
                             commit_inclutivity: RoaringBitmap::from([1])
                         }
                     )
-                ])
+                ]),
+                all_words: None
             }
         );
     }
