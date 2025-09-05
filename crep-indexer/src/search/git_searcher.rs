@@ -196,14 +196,17 @@ impl<'i> GitSearcher<'i> {
                 word,
                 doc.all_words.as_ref().unwrap(),
             );
-            return words_to_find
-                .into_iter()
-                .filter_map(|w| {
-                    doc.words
-                        .get(&w)
-                        .map(|index| (w, index.commit_inclutivity.clone()))
-                })
-                .collect::<Vec<_>>();
+
+            let bitmap = intersect_bitmaps(
+                &words_to_find
+                    .into_iter()
+                    .filter_map(|w| {
+                        doc.words.get(&w).map(|index| &index.commit_inclutivity)
+                    })
+                    .collect::<Vec<_>>(),
+            );
+
+            return vec![(word.to_string(), bitmap.unwrap())];
         }
 
         let lines = vec![word.to_owned()];
