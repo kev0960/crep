@@ -8,7 +8,11 @@ use git2::{
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use roaring::RoaringBitmap;
-use std::{cell::RefCell, collections::HashMap, path::Path};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use super::{
     check_binary::Utf8FileChecker,
@@ -34,6 +38,8 @@ pub struct GitIndexer {
     pub word_to_file_id_ever_contained: HashMap<String, RoaringBitmap>,
 
     utf8_file_checker: Utf8FileChecker,
+
+    ignored_non_utf8_file_path_set: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -46,6 +52,7 @@ struct CurrentGitDiffFile {
 pub struct GitIndexerConfig {
     pub show_index_progress: bool,
     pub main_branch_name: String,
+    pub ignore_utf8_error: bool,
 }
 
 impl GitIndexer {
@@ -60,6 +67,7 @@ impl GitIndexer {
             file_id_to_diff_tracker: HashMap::new(),
             file_id_to_document: HashMap::new(),
             word_to_file_id_ever_contained: HashMap::new(),
+            ignored_non_utf8_file_path_set: HashSet::new(),
         }
     }
 
@@ -214,10 +222,14 @@ impl GitIndexer {
                 match delta.status() {
                     Delta::Modified => {
                         if let Some(path) = delta.old_file().path() {
-                            let file_id = self.get_file_id_insert_if_missing(
-                                path.to_str().unwrap(),
-                            );
+                            let path = path.to_str().unwrap();
 
+                            if self.ignored_non_utf8_file_path_set.contains(path) {
+                                *current_diff_file = None;
+                                return true;
+                            }
+
+                            let file_id = self.get_file_id_insert_if_missing(path);
                             *current_diff_file = Some(CurrentGitDiffFile {
                                 current_file_id: file_id,
                                 status: delta.status(),
@@ -226,8 +238,14 @@ impl GitIndexer {
                     }
                     Delta::Deleted => {
                         if let Some(path) = delta.old_file().path() {
+                            let path = path.to_str().unwrap();
+                            if self.ignored_non_utf8_file_path_set.contains(path) {
+                                *current_diff_file = None;
+                                return true;
+                            }
+
                             let file_id = self.get_file_id_insert_if_missing(
-                                path.to_str().unwrap(),
+                                path,
                             );
 
                             *current_diff_file = Some(CurrentGitDiffFile {
@@ -238,8 +256,14 @@ impl GitIndexer {
                     }
                     Delta::Added => {
                         if let Some(path) = delta.new_file().path() {
+                            let path = path.to_str().unwrap();
+                            if self.ignored_non_utf8_file_path_set.contains(path) {
+                                *current_diff_file = None;
+                                return true;
+                            }
+
                             let file_id = self.get_file_id_insert_if_missing(
-                                path.to_str().unwrap(),
+                                path,
                             );
 
                             *current_diff_file = Some(CurrentGitDiffFile {
@@ -255,6 +279,11 @@ impl GitIndexer {
             },
             None,
             Some(&mut |_delta, hunk| {
+                let current_diff_file = current_diff_file.borrow();
+                if current_diff_file.is_none() {
+                    return true;
+                }
+
                 file_delta.borrow_mut().push(GitDelta {
                     prev_line_start_num: hunk.old_start(),
                     prev_line_count: hunk.old_lines(),
@@ -268,6 +297,9 @@ impl GitIndexer {
             }),
             Some(&mut |_, _, line| {
                 let current_diff_file = current_diff_file.borrow();
+                if current_diff_file.is_none() {
+                    return true;
+                }
 
                 // No need to handle Delte::Removed case.
                 if let Some(current_diff_file) = current_diff_file.as_ref()
@@ -336,7 +368,20 @@ impl GitIndexer {
                         return TreeWalkResult::Ok;
                     }
 
-                    let content = std::str::from_utf8(blob.content()).unwrap();
+                    let content = std::str::from_utf8(blob.content());
+
+                    if content.is_err() {
+                        if self.config.ignore_utf8_error {
+                            self.ignored_non_utf8_file_path_set
+                                .insert(format!("{root}{name}"));
+
+                            return TreeWalkResult::Ok;
+                        } else {
+                            panic!("Non UTF-8 file found at {root}{name}");
+                        }
+                    }
+
+                    let content = content.unwrap();
                     let file_name = &format!("{root}{name}");
 
                     let file_id = self.get_file_id_insert_if_missing(file_name);

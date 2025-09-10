@@ -39,6 +39,7 @@ fn main() {
             let indexer = Indexer::new(&IndexerConfig {
                 root_dir: &args.path,
                 main_branch_name: args.main_branch.as_deref(),
+                ignore_utf8_error: true,
             });
 
             let index = indexer.index().unwrap();

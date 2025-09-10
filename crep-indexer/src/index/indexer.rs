@@ -14,6 +14,7 @@ use super::{
 pub struct Indexer {
     root_dir: String,
     main_branch_name: Option<String>,
+    ignore_utf8_error: bool,
 }
 
 pub enum IndexResult {
@@ -24,6 +25,7 @@ pub enum IndexResult {
 pub struct IndexerConfig<'a> {
     pub root_dir: &'a str,
     pub main_branch_name: Option<&'a str>,
+    pub ignore_utf8_error: bool,
 }
 
 impl Indexer {
@@ -31,6 +33,7 @@ impl Indexer {
         Indexer {
             root_dir: config.root_dir.to_string(),
             main_branch_name: config.main_branch_name.map(|b| b.to_owned()),
+            ignore_utf8_error: config.ignore_utf8_error,
         }
     }
 
@@ -44,6 +47,7 @@ impl Indexer {
                         .as_ref()
                         .unwrap_or(&"main".to_owned())
                         .to_owned(),
+                    ignore_utf8_error: self.ignore_utf8_error,
                 });
                 indexer.index_history(repo)?;
 
