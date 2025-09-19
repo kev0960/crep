@@ -174,6 +174,7 @@ mod tests {
         let indexer = Indexer::new(&IndexerConfig {
             root_dir: &append_test_dir_path("test_data/indexer"),
             main_branch_name: None,
+            ignore_utf8_error: false,
         });
         let index = indexer.index_directory();
 

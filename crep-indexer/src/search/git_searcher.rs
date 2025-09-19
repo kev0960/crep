@@ -14,10 +14,7 @@ use crate::{
 
 pub struct GitSearcher<'i> {
     index: &'i GitIndex,
-    word_to_docs_cache: LruCache<
-        String,
-        Option<(String, RoaringBitmap, /*should_split_trigram=*/ bool)>,
-    >,
+    word_to_docs_cache: LruCache<String, Option<(String, RoaringBitmap)>>,
 }
 
 impl<'i> GitSearcher<'i> {
@@ -32,11 +29,8 @@ impl<'i> GitSearcher<'i> {
 
     pub fn search(&mut self, query: &str) -> Vec<RawPerFileSearchResult> {
         let words = query.split_whitespace();
-        let mut documents_containing_each_word: Vec<(
-            String,
-            RoaringBitmap,
-            /*should_split_trigram=*/ bool,
-        )> = vec![];
+        let mut documents_containing_each_word: Vec<(String, RoaringBitmap)> =
+            vec![];
 
         for word in words {
             let results = self.get_document_bitmap_containing_word(word);
@@ -51,10 +45,30 @@ impl<'i> GitSearcher<'i> {
         self.find_overlapping_document(&documents_containing_each_word)
     }
 
-    pub fn get_document_bitmap_containing_word(
+    pub fn regex_search(
+        &mut self,
+        query: &str,
+    ) -> Result<Vec<RawPerFileSearchResult>, String> {
+        let hir = regex_syntax::parse(query);
+
+        if hir.is_err() {
+            return Err(format!(
+                "Failed to parse regex {query}. Error: {:?}",
+                hir.err()
+            ));
+        }
+
+        let hir = hir.unwrap();
+
+        // Now iterate the hir and build the search result.
+
+        Ok(vec![])
+    }
+
+    fn get_document_bitmap_containing_word(
         &mut self,
         word: &str,
-    ) -> Option<(String, RoaringBitmap, /*should_split_trigram=*/ bool)> {
+    ) -> Option<(String, RoaringBitmap)> {
         if let Some(docs) = self.word_to_docs_cache.get(word) {
             return docs.clone();
         }
@@ -73,9 +87,9 @@ impl<'i> GitSearcher<'i> {
             let overlaps = union_bitmaps(&docs).unwrap();
 
             self.word_to_docs_cache
-                .put(w.clone(), Some((w.clone(), overlaps.clone(), false)));
+                .put(w.clone(), Some((w.clone(), overlaps.clone())));
 
-            return Some((w, overlaps, false));
+            return Some((w, overlaps));
         }
 
         let lines = vec![w.clone()];
@@ -101,19 +115,15 @@ impl<'i> GitSearcher<'i> {
 
         self.word_to_docs_cache.put(
             w.clone(),
-            Some((
-                w.clone(),
-                intersect_bitmaps(bitmaps.as_slice()).unwrap(),
-                true,
-            )),
+            Some((w.clone(), intersect_bitmaps(bitmaps.as_slice()).unwrap())),
         );
 
-        Some((w, intersect_bitmaps(bitmaps.as_slice()).unwrap(), true))
+        Some((w, intersect_bitmaps(bitmaps.as_slice()).unwrap()))
     }
 
     fn find_overlapping_document(
         &self,
-        bitmaps: &'i Vec<(String, RoaringBitmap, bool)>,
+        bitmaps: &'i Vec<(String, RoaringBitmap)>,
     ) -> Vec<RawPerFileSearchResult> {
         let mut result = vec![];
 
@@ -132,12 +142,8 @@ impl<'i> GitSearcher<'i> {
             let document = document.unwrap();
             let commit_histories_per_word = bitmaps
                 .iter()
-                .map(|(word, _, should_split_trigram)| {
-                    self.find_matching_commit_histories_in_doc(
-                        document,
-                        word,
-                        *should_split_trigram,
-                    )
+                .map(|(word, _)| {
+                    self.find_matching_commit_histories_in_doc(document, word)
                 })
                 .collect::<Vec<_>>();
 
@@ -189,9 +195,8 @@ impl<'i> GitSearcher<'i> {
         &self,
         doc: &Document,
         word: &str,
-        should_split_trigram: bool,
     ) -> Vec<(String, RoaringBitmap)> {
-        if !should_split_trigram {
+        if word.len() < 3 {
             let words_to_find = find_all_words_containing_key(
                 word,
                 doc.all_words.as_ref().unwrap(),
