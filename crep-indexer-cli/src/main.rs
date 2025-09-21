@@ -105,7 +105,7 @@ fn handle_query(index: GitIndex, path: &str) {
             break;
         }
 
-        let results = searcher.search(input);
+        let results = searcher.regex_search(input).unwrap();
         viewer.show_results(&results).unwrap();
     }
 }

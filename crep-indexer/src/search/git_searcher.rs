@@ -1,8 +1,11 @@
 use std::collections::HashSet;
+use std::fmt::Write;
 
+use anyhow::anyhow;
 use fst::{IntoStreamer, Set};
 use lru::LruCache;
 use regex_automata::dense;
+use regex_syntax::hir::{Class, Hir, HirKind};
 use roaring::RoaringBitmap;
 
 use crate::{
@@ -11,6 +14,8 @@ use crate::{
     tokenizer::{Tokenizer, TokenizerMethod},
     util::bitmap::utils::{intersect_bitmaps, union_bitmaps},
 };
+
+use super::regex_search::{RegexSearchCandidates, SearchPartTrigram, Trigram};
 
 pub struct GitSearcher<'i> {
     index: &'i GitIndex,
@@ -59,10 +64,151 @@ impl<'i> GitSearcher<'i> {
         }
 
         let hir = hir.unwrap();
+        println!("Hir : {hir:?}");
 
-        // Now iterate the hir and build the search result.
+        let candidates = self
+            .build_candidates_from_hir(&hir)
+            .map_err(|e| format!("Error building candidates {e:?}"))?;
 
-        Ok(vec![])
+        let mut search_result = vec![];
+        for cand in candidates.candidates {
+            let trigrams = cand.trigrams;
+
+            if trigrams.is_empty() {
+                continue;
+            }
+
+            // Trigrams to look for and the list of documents.
+            for doc_id in cand.docs_to_check {
+                let doc =
+                    self.index.file_id_to_document.get(&(doc_id as FileId));
+
+                if let Some(doc) = doc {
+                    let commit_history = self
+                        .find_matching_commit_histories_in_doc_from_trigrams(
+                            doc, &trigrams,
+                        );
+
+                    if commit_history.as_ref().is_some_and(|c| !c.is_empty()) {
+                        search_result.push(RawPerFileSearchResult {
+                            query: Query::Regex(query.to_owned()),
+                            file_id: doc_id,
+                            overlapped_commits: commit_history.unwrap(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(search_result)
+    }
+
+    fn build_candidates_from_hir(
+        &mut self,
+        hir: &Hir,
+    ) -> anyhow::Result<RegexSearchCandidates> {
+        match hir.kind() {
+            HirKind::Empty => Ok(RegexSearchCandidates { candidates: vec![] }),
+            HirKind::Literal(literal) => {
+                let literal = std::str::from_utf8(&literal.0)?;
+                if let Some((_, docs)) =
+                    self.get_document_bitmap_containing_word(literal)
+                {
+                    let trigrams = Trigram::from_long_string(literal);
+                    Ok(RegexSearchCandidates {
+                        candidates: vec![SearchPartTrigram {
+                            trigrams,
+                            docs_to_check: docs,
+                        }],
+                    })
+                } else {
+                    Ok(RegexSearchCandidates { candidates: vec![] })
+                }
+            }
+            HirKind::Repetition(repetition) => {
+                let candidate =
+                    self.build_candidates_from_hir(&repetition.sub)?;
+                Ok(RegexSearchCandidates::repeat(
+                    &candidate,
+                    repetition.min,
+                    repetition.max,
+                ))
+            }
+            HirKind::Concat(hirs) => {
+                let candidates: Vec<RegexSearchCandidates> = hirs
+                    .iter()
+                    .map(|hir| self.build_candidates_from_hir(hir))
+                    .collect::<Result<_, _>>()?;
+
+                Ok(RegexSearchCandidates::concat(&candidates))
+            }
+            HirKind::Alternation(hirs) => {
+                let candidates: Vec<RegexSearchCandidates> = hirs
+                    .iter()
+                    .map(|hir| self.build_candidates_from_hir(hir))
+                    .collect::<Result<_, _>>()?;
+
+                Ok(RegexSearchCandidates::alternation(&candidates))
+            }
+            HirKind::Class(class) => {
+                let pattern = match class {
+                    Class::Unicode(unicode) => {
+                        let mut pattern = String::from(".*[");
+                        for range in unicode.ranges() {
+                            write!(
+                                &mut pattern,
+                                r"\u{{{:X}}}-\u{{{:X}}}",
+                                range.start() as u32,
+                                range.end() as u32
+                            )?;
+                        }
+
+                        pattern.push_str("].*");
+                        pattern
+                    }
+                    Class::Bytes(bytes) => {
+                        let mut pattern = String::from(".*[");
+                        for range in bytes.ranges() {
+                            write!(
+                                &mut pattern,
+                                r"\x{:02X}-\x{:02X}",
+                                range.start(),
+                                range.end()
+                            )?;
+                        }
+
+                        pattern.push_str("].*");
+                        pattern
+                    }
+                };
+
+                let dfa = dense::Builder::new().build(&pattern)?;
+                let all_matched_trigrams = self
+                    .index
+                    .all_words
+                    .search(dfa)
+                    .into_stream()
+                    .into_strs()?;
+
+                Ok(RegexSearchCandidates {
+                    candidates: all_matched_trigrams
+                        .iter()
+                        .map(|t| SearchPartTrigram {
+                            trigrams: vec![Trigram::new(t)],
+                            docs_to_check: self
+                                .index
+                                .word_to_file_id_ever_contained
+                                .get(t)
+                                .unwrap()
+                                .clone(),
+                        })
+                        .collect(),
+                })
+            }
+            HirKind::Capture(_) | HirKind::Look(_) => {
+                Err(anyhow!("Do not use capture or look"))
+            }
+        }
     }
 
     fn get_document_bitmap_containing_word(
@@ -181,7 +327,7 @@ impl<'i> GitSearcher<'i> {
                 }
 
                 result.push(RawPerFileSearchResult {
-                    words: selected_words,
+                    query: Query::Words(selected_words),
                     file_id,
                     overlapped_commits,
                 });
@@ -236,11 +382,56 @@ impl<'i> GitSearcher<'i> {
 
         vec![(word.to_owned(), intersect_bitmaps(&commit_bitmaps).unwrap())]
     }
+
+    fn find_matching_commit_histories_in_doc_from_trigrams(
+        &self,
+        doc: &Document,
+        trigrams: &[Trigram],
+    ) -> Option<RoaringBitmap> {
+        if trigrams.is_empty() {
+            return None;
+        }
+
+        let mut commit_bitmaps = vec![];
+
+        let first = &trigrams[0];
+        if first.is_trigram() {
+            for t in trigrams {
+                if let Some(b) = doc.words.get(&t.to_string()) {
+                    commit_bitmaps.push(&b.commit_inclutivity);
+                } else {
+                    return None;
+                }
+            }
+        } else {
+            assert!(trigrams.len() == 1);
+
+            let words_to_find = find_all_words_containing_key(
+                &first.to_string(),
+                doc.all_words.as_ref().unwrap(),
+            );
+
+            commit_bitmaps = words_to_find
+                .into_iter()
+                .filter_map(|w| {
+                    doc.words.get(&w).map(|index| &index.commit_inclutivity)
+                })
+                .collect::<Vec<_>>();
+        }
+
+        intersect_bitmaps(&commit_bitmaps)
+    }
+}
+
+#[derive(Debug)]
+pub enum Query {
+    Words(Vec<String>),
+    Regex(String),
 }
 
 #[derive(Debug)]
 pub struct RawPerFileSearchResult {
-    pub words: Vec<String>,
+    pub query: Query,
     pub file_id: u32,
     pub overlapped_commits: RoaringBitmap,
 }
@@ -259,3 +450,6 @@ fn find_all_words_containing_key(
     let dfa = dense::Builder::new().build(&pattern).unwrap();
     all_words.search(dfa).into_stream().into_strs().unwrap()
 }
+
+#[cfg(test)]
+mod regex_build_hir {}

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     path::Path,
 };
 
@@ -7,14 +7,17 @@ use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use git2::{Oid, Repository};
 use owo_colors::OwoColorize;
+use regex::Regex;
 use roaring::RoaringBitmap;
 
 use crate::index::{git_index::GitIndex, git_indexer::CommitIndex};
 
 use super::{
-    git_searcher::RawPerFileSearchResult,
+    git_searcher::{Query, RawPerFileSearchResult},
     line_formatter::highlight_line_by_positions,
 };
+
+static MAX_SEARCH_RESULT: usize = 10;
 
 pub struct GitSearchResultViewer<'i> {
     repo: Repository,
@@ -41,7 +44,7 @@ impl<'i> GitSearchResultViewer<'i> {
                 index += 1;
             }
 
-            if index >= 1000 {
+            if index >= MAX_SEARCH_RESULT {
                 println!("Too many results.. return");
                 break;
             }
@@ -70,12 +73,23 @@ impl<'i> GitSearchResultViewer<'i> {
             .map(|line| line.to_string())
             .collect::<Vec<String>>();
 
-        let matches =
-            self.find_matches_in_document(&result.words, &file_content)?;
+        let matches = match &result.query {
+            Query::Words(words) => self
+                .find_word_matches_in_document(words, &file_content)?
+                .iter()
+                .map(|(k, v)| (*k, *v))
+                .collect::<Vec<_>>(),
+            Query::Regex(regex) => {
+                let r = Regex::new(regex)?;
+                self.find_regex_matches_in_document(&r, &file_content)
+            }
+        };
 
-        if matches.len() != result.words.len() {
-            // Not every words are found in the document.
-            return Ok(None);
+        if let Query::Words(ref words) = result.query {
+            if matches.len() != words.len() {
+                // Not every words are found in the document.
+                return Ok(None);
+            }
         }
 
         let mut line_to_words: HashMap<usize, Vec<(&str, usize)>> =
@@ -93,8 +107,8 @@ impl<'i> GitSearchResultViewer<'i> {
         }
 
         let lines_to_show = matches
-            .values()
-            .flat_map(|(line, _)| {
+            .iter()
+            .flat_map(|(_, (line, _))| {
                 (line.saturating_sub(2)..line.saturating_add(2))
                     .filter(|l| *l < file_content.len())
             })
@@ -106,7 +120,14 @@ impl<'i> GitSearchResultViewer<'i> {
 
         let mut result = format!(
             "{index}. Found words {} at {}\n",
-            result.words.join(",").red(),
+            matches
+                .iter()
+                .map(|(k, _)| *k)
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(",")
+                .red(),
             self.index.file_id_to_path[result.file_id as usize].yellow()
         );
 
@@ -163,7 +184,7 @@ impl<'i> GitSearchResultViewer<'i> {
         }
     }
 
-    fn find_matches_in_document<'w>(
+    fn find_word_matches_in_document<'w>(
         &self,
         words: &'w [String],
         content: &[String],
@@ -190,6 +211,26 @@ impl<'i> GitSearchResultViewer<'i> {
             .into_iter()
             .map(|(k, v)| return (words[k].as_str(), v))
             .collect())
+    }
+
+    fn find_regex_matches_in_document<'w>(
+        &self,
+        regex: &Regex,
+        content: &'w [String],
+    ) -> Vec<(&'w str, (usize, usize))> {
+        let mut word_pos_found_lines = vec![];
+
+        for (line_num, line) in content.iter().enumerate() {
+            if let Some(m) = regex.find(line) {
+                word_pos_found_lines.push((m.as_str(), (line_num, m.start())));
+            }
+
+            if word_pos_found_lines.len() > 10 {
+                break;
+            }
+        }
+
+        word_pos_found_lines
     }
 }
 
