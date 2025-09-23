@@ -83,7 +83,8 @@ impl Trigram {
         for c in &self.data {
             match c {
                 CharacterClass::Char(c) => {
-                    pattern.push(*c);
+                    let s = c.to_string();
+                    pattern.push_str(&regex::escape(&s));
                 }
                 CharacterClass::CharRange(range) => {
                     pattern.push('[');
