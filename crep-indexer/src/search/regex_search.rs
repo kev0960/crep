@@ -1,15 +1,22 @@
+use std::fmt::Write;
 use std::str::FromStr;
 
 use arrayvec::ArrayVec;
-use roaring::RoaringBitmap;
-
-use crate::util::bitmap::utils::intersect_bitmaps;
+use regex_syntax::hir::Class;
 
 use super::permutation::PermutationIterator;
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum CharacterClass {
     Char(char),
+    CharRange(Vec<CharRange>),
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct CharRange {
+    // Ranges are *inclusive*.
+    start: char,
+    end: char,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -17,9 +24,13 @@ pub struct Trigram {
     data: ArrayVec<CharacterClass, 3>,
 }
 
+pub enum RegexOrString {
+    String(String),
+    Regex(String),
+}
+
 impl Trigram {
     pub fn new(s: &str) -> Self {
-        println!("s : {s}");
         s.parse().unwrap()
     }
 
@@ -46,25 +57,61 @@ impl Trigram {
         v
     }
 
-    pub fn is_trigram(&self) -> bool {
-        self.data.len() == 3
-    }
+    pub fn create_matching_regex_or_string(&self) -> RegexOrString {
+        if self.data.len() == 3
+            && self
+                .data
+                .iter()
+                .all(|c| matches!(c, CharacterClass::Char(_)))
+        {
+            return RegexOrString::String(
+                self.data
+                    .iter()
+                    .map(|c| {
+                        if let CharacterClass::Char(c) = c {
+                            c
+                        } else {
+                            panic!("This should not happen");
+                        }
+                    })
+                    .collect::<String>(),
+            );
+        }
 
-    pub fn to_string(&self) -> String {
-        let mut s = String::new();
+        // Otherwise this is the regex.
+        let mut pattern = String::from(".*");
         for c in &self.data {
             match c {
-                CharacterClass::Char(c) => s.push(*c),
+                CharacterClass::Char(c) => {
+                    pattern.push(*c);
+                }
+                CharacterClass::CharRange(range) => {
+                    pattern.push('[');
+
+                    for interval in range {
+                        write!(
+                            &mut pattern,
+                            r"\u{{{:X}}}-\u{{{:X}}}",
+                            interval.start as u32, interval.end as u32
+                        )
+                        .unwrap();
+                    }
+
+                    pattern.push(']');
+                }
             }
         }
 
-        s
+        pattern.push_str(".*");
+        RegexOrString::Regex(pattern)
     }
 
     // Concat two small (the sum of trigram lengths should be <= 3) trigrams.
     fn concat_small(left: &Trigram, right: &Trigram) -> Self {
         let mut left = left.data.clone();
-        left.try_extend_from_slice(&right.data).unwrap();
+        for r in &right.data {
+            left.push(r.clone());
+        }
 
         Self { data: left }
     }
@@ -78,9 +125,9 @@ impl Trigram {
 
             for i in start_index..start_index + 3 {
                 if i < left.data.len() {
-                    data.push(left.data[i]);
+                    data.push(left.data[i].clone());
                 } else {
-                    data.push(right.data[i - left.data.len()])
+                    data.push(right.data[i - left.data.len()].clone())
                 }
             }
 
@@ -104,10 +151,39 @@ impl FromStr for Trigram {
     }
 }
 
+impl From<&Class> for Trigram {
+    fn from(c: &Class) -> Self {
+        let mut range: Vec<CharRange> = vec![];
+        match c {
+            Class::Bytes(b) => {
+                for interval in b.ranges() {
+                    range.push(CharRange {
+                        start: interval.start() as char,
+                        end: interval.end() as char,
+                    });
+                }
+            }
+            Class::Unicode(u) => {
+                for interval in u.ranges() {
+                    range.push(CharRange {
+                        start: interval.start(),
+                        end: interval.end(),
+                    });
+                }
+            }
+        }
+
+        Self {
+            data: ArrayVec::<CharacterClass, 3>::from_iter([
+                CharacterClass::CharRange(range),
+            ]),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct SearchPartTrigram {
     pub trigrams: Vec<Trigram>,
-    pub docs_to_check: RoaringBitmap,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -131,25 +207,20 @@ impl RegexSearchCandidates {
         let mut new_candidates: Vec<SearchPartTrigram> = vec![];
         for permutation in permutations {
             let mut trigrams: Vec<&Vec<Trigram>> = vec![];
-            let mut docs_bitmaps: Vec<&RoaringBitmap> = vec![];
             for (index, perm_index) in permutation.iter().enumerate() {
                 let part = &parts[index].candidates[*perm_index as usize];
 
                 if !part.trigrams.is_empty() {
                     trigrams.push(&part.trigrams);
                 }
-
-                docs_bitmaps.push(&part.docs_to_check)
             }
 
             // Now merge trigrams.
             let merged_trigrams = merge_trigrams(&trigrams);
-            let docs_to_check = intersect_bitmaps(&docs_bitmaps).unwrap();
 
             new_candidates.push({
                 SearchPartTrigram {
                     trigrams: merged_trigrams,
-                    docs_to_check,
                 }
             })
         }
@@ -182,10 +253,7 @@ impl RegexSearchCandidates {
         for repeat in min_repeat_count..(max_repeat_count + 1) {
             // Now pick (repeat)
             if repeat == 0 {
-                repeated_trigrams.push(SearchPartTrigram {
-                    trigrams: vec![],
-                    docs_to_check: RoaringBitmap::full(),
-                });
+                repeated_trigrams.push(SearchPartTrigram { trigrams: vec![] });
 
                 continue;
             }
@@ -195,17 +263,13 @@ impl RegexSearchCandidates {
             );
 
             for permutation in permutations {
-                let mut doc_bitmaps = vec![];
                 let mut trigrams = vec![];
                 for index in permutation {
                     trigrams.push(&part.candidates[index as usize].trigrams);
-                    doc_bitmaps
-                        .push(&part.candidates[index as usize].docs_to_check);
                 }
 
                 repeated_trigrams.push(SearchPartTrigram {
                     trigrams: merge_trigrams(&trigrams),
-                    docs_to_check: intersect_bitmaps(&doc_bitmaps).unwrap(),
                 });
             }
         }
@@ -463,21 +527,16 @@ mod regex_search_part_tests {
         let part1 = RegexSearchCandidates {
             candidates: vec![SearchPartTrigram {
                 trigrams: t!("abc", "bcd"),
-                docs_to_check: RoaringBitmap::from_iter([1, 2, 3]),
             }],
         };
 
         let part2 = RegexSearchCandidates {
-            candidates: vec![SearchPartTrigram {
-                trigrams: t!("12"),
-                docs_to_check: RoaringBitmap::from_iter([3, 4]),
-            }],
+            candidates: vec![SearchPartTrigram { trigrams: t!("12") }],
         };
 
         let part3 = RegexSearchCandidates {
             candidates: vec![SearchPartTrigram {
                 trigrams: t!("xyz"),
-                docs_to_check: RoaringBitmap::from_iter([3, 4, 5]),
             }],
         };
 
@@ -488,7 +547,6 @@ mod regex_search_part_tests {
                     trigrams: t!(
                         "abc", "bcd", "cd1", "d12", "12x", "2xy", "xyz"
                     ),
-                    docs_to_check: RoaringBitmap::from_iter([3])
                 }]
             }
         );
@@ -499,15 +557,11 @@ mod regex_search_part_tests {
         let part1 = RegexSearchCandidates {
             candidates: vec![SearchPartTrigram {
                 trigrams: t!("abc", "bcd"),
-                docs_to_check: RoaringBitmap::from_iter([1, 2, 3]),
             }],
         };
 
         let part2 = RegexSearchCandidates {
-            candidates: vec![SearchPartTrigram {
-                trigrams: t!("12"),
-                docs_to_check: RoaringBitmap::from_iter([3, 4]),
-            }],
+            candidates: vec![SearchPartTrigram { trigrams: t!("12") }],
         };
 
         assert_eq!(
@@ -516,12 +570,8 @@ mod regex_search_part_tests {
                 candidates: vec![
                     SearchPartTrigram {
                         trigrams: t!("abc", "bcd"),
-                        docs_to_check: RoaringBitmap::from_iter([1, 2, 3])
                     },
-                    SearchPartTrigram {
-                        trigrams: t!("12"),
-                        docs_to_check: RoaringBitmap::from_iter([3, 4])
-                    }
+                    SearchPartTrigram { trigrams: t!("12") }
                 ]
             }
         );
@@ -530,31 +580,18 @@ mod regex_search_part_tests {
     #[test]
     fn test_repeat_simple() {
         let part = RegexSearchCandidates {
-            candidates: vec![SearchPartTrigram {
-                trigrams: t!("a"),
-                docs_to_check: RoaringBitmap::from_iter([1, 2, 3]),
-            }],
+            candidates: vec![SearchPartTrigram { trigrams: t!("a") }],
         };
 
         assert_eq!(
             RegexSearchCandidates::repeat(&part, 0, Some(100)),
             RegexSearchCandidates {
                 candidates: vec![
-                    SearchPartTrigram {
-                        trigrams: vec![],
-                        docs_to_check: RoaringBitmap::full()
-                    },
-                    SearchPartTrigram {
-                        trigrams: t!("a"),
-                        docs_to_check: RoaringBitmap::from_iter([1, 2, 3]),
-                    },
-                    SearchPartTrigram {
-                        trigrams: t!("aa"),
-                        docs_to_check: RoaringBitmap::from_iter([1, 2, 3]),
-                    },
+                    SearchPartTrigram { trigrams: vec![] },
+                    SearchPartTrigram { trigrams: t!("a") },
+                    SearchPartTrigram { trigrams: t!("aa") },
                     SearchPartTrigram {
                         trigrams: t!("aaa"),
-                        docs_to_check: RoaringBitmap::from_iter([1, 2, 3]),
                     }
                 ]
             }
@@ -565,17 +602,10 @@ mod regex_search_part_tests {
     fn test_repeat_complex() {
         let part = RegexSearchCandidates {
             candidates: vec![
-                SearchPartTrigram {
-                    trigrams: t!("a"),
-                    docs_to_check: RoaringBitmap::from_iter([1, 2, 3]),
-                },
-                SearchPartTrigram {
-                    trigrams: t!("bc"),
-                    docs_to_check: RoaringBitmap::from_iter([2, 3, 4]),
-                },
+                SearchPartTrigram { trigrams: t!("a") },
+                SearchPartTrigram { trigrams: t!("bc") },
                 SearchPartTrigram {
                     trigrams: t!("xyz"),
-                    docs_to_check: RoaringBitmap::from_iter([3, 4, 5]),
                 },
             ],
         };
@@ -584,41 +614,30 @@ mod regex_search_part_tests {
             RegexSearchCandidates::repeat(&part, 2, Some(2)),
             RegexSearchCandidates {
                 candidates: vec![
-                    SearchPartTrigram {
-                        trigrams: t!("aa"),
-                        docs_to_check: RoaringBitmap::from_iter([1, 2, 3]),
-                    },
+                    SearchPartTrigram { trigrams: t!("aa") },
                     SearchPartTrigram {
                         trigrams: t!("abc"),
-                        docs_to_check: RoaringBitmap::from_iter([2, 3]),
                     },
                     SearchPartTrigram {
                         trigrams: t!("axy", "xyz"),
-                        docs_to_check: RoaringBitmap::from_iter([3]),
                     },
                     SearchPartTrigram {
                         trigrams: t!("bca"),
-                        docs_to_check: RoaringBitmap::from_iter([2, 3]),
                     },
                     SearchPartTrigram {
                         trigrams: t!("bcb", "cbc"),
-                        docs_to_check: RoaringBitmap::from_iter([2, 3, 4]),
                     },
                     SearchPartTrigram {
                         trigrams: t!("bcx", "cxy", "xyz"),
-                        docs_to_check: RoaringBitmap::from_iter([3, 4]),
                     },
                     SearchPartTrigram {
                         trigrams: t!("xyz", "yza"),
-                        docs_to_check: RoaringBitmap::from_iter([3]),
                     },
                     SearchPartTrigram {
                         trigrams: t!("xyz", "yzb", "zbc"),
-                        docs_to_check: RoaringBitmap::from_iter([3, 4]),
                     },
                     SearchPartTrigram {
                         trigrams: t!("xyz", "yzx", "zxy", "xyz"),
-                        docs_to_check: RoaringBitmap::from_iter([3, 4, 5]),
                     },
                 ]
             }
