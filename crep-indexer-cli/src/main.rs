@@ -1,8 +1,12 @@
+mod app;
+mod searcher;
+
 use std::{
     io::{self, Write},
     path::Path,
 };
 
+use app::App;
 use clap::Parser;
 use crep_indexer::{
     index::{
@@ -11,6 +15,11 @@ use crep_indexer::{
     },
     search::{git_searcher::GitSearcher, result_viewer::GitSearchResultViewer},
 };
+
+use color_eyre::Result;
+use crossterm::event::{self, Event};
+use ratatui::{DefaultTerminal, Frame};
+use searcher::Searcher;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -30,7 +39,11 @@ struct Args {
     save_path: Option<String>,
 }
 
-fn main() {
+fn main() -> io::Result<()> {
+    color_eyre::install().unwrap();
+
+    let mut terminal = ratatui::init();
+
     let args = Args::parse();
 
     let index = match args.load_path {
@@ -57,35 +70,22 @@ fn main() {
         }
     };
 
-    handle_query(index, &args.path);
     /*
-        let indexer = Indexer::new("/home/jaebum/Halfmore");
-        let index = indexer.index_directory();
-
-        let searcher = Searcher::new(&index);
-
-        let mut result_viewer = SearchResultViewer::new();
-
-        loop {
-            print!("Query :: ");
-            io::stdout().flush().unwrap();
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
-
-            let input = input.trim();
-
-            if input.is_empty() {
-                break;
-            }
-
-            let results = searcher.search(input);
-            println!(
-                "{}",
-                result_viewer.show_results(&results, &index.file_to_word_pos)
-            );
-        }
+    handle_query(index, &args.path);
     */
+
+    let searcher = Searcher::new(&index);
+
+    let result = App::new(
+        args.load_path,
+        &args.path,
+        args.main_branch.as_deref(),
+        args.save_path,
+    )
+    .run(&mut terminal);
+
+    ratatui::restore();
+    result
 }
 
 fn handle_query(index: GitIndex, path: &str) {
