@@ -2,6 +2,7 @@ mod app;
 mod searcher;
 
 use std::{
+    fs::File,
     io::{self},
     path::Path,
 };
@@ -36,6 +37,11 @@ struct Args {
 fn main() -> io::Result<()> {
     color_eyre::install().unwrap();
 
+    // let file = File::create("debug.log").unwrap();
+    // let _redir = Redirect::stdout(file).unwrap();
+
+    let mut terminal = ratatui::init();
+
     let args = Args::parse();
     let index = match args.load_path {
         Some(load_path) => GitIndex::load(Path::new(&load_path)).unwrap(),
@@ -60,8 +66,6 @@ fn main() -> io::Result<()> {
             }
         }
     };
-
-    let mut terminal = ratatui::init();
 
     let searcher = Searcher::new(&index, &args.path);
     let result = App::new(searcher).run(&mut terminal);

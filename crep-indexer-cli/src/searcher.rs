@@ -22,7 +22,7 @@ impl<'a> Searcher<'a> {
         Self {
             repo: Repository::open(Path::new(path)).unwrap(),
             index,
-            searcher: GitSearcher::new(&index),
+            searcher: GitSearcher::new(index),
         }
     }
 
@@ -58,6 +58,9 @@ impl<'a> Searcher<'a> {
 
                 if let Some(search_result) = search_result {
                     search_results.push(search_result);
+
+                    // Only add one case.
+                    break;
                 }
             }
         }

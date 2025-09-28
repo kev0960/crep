@@ -36,6 +36,10 @@ impl<'i> GitSearcher<'i> {
     }
 
     pub fn search(&mut self, query: &str) -> Vec<RawPerFileSearchResult> {
+        if query.is_empty() {
+            return vec![];
+        }
+
         let words = query.split_whitespace();
         let mut documents_containing_each_word: Vec<(String, RoaringBitmap)> =
             vec![];
@@ -46,7 +50,7 @@ impl<'i> GitSearcher<'i> {
                 return vec![];
             }
 
-            println!("{word} ==> {results:?}");
+            // println!("{word} ==> {results:?}");
             documents_containing_each_word.push(results.unwrap());
         }
 
@@ -57,6 +61,10 @@ impl<'i> GitSearcher<'i> {
         &mut self,
         query: &str,
     ) -> Result<Vec<RawPerFileSearchResult>, String> {
+        if query.is_empty() {
+            return Ok(vec![]);
+        }
+
         let hir = regex_syntax::parse(query);
 
         if hir.is_err() {
@@ -67,13 +75,13 @@ impl<'i> GitSearcher<'i> {
         }
 
         let hir = hir.unwrap();
-        println!("Hir : {hir:?}");
+        // println!("Hir : {hir:?}");
 
         let candidates = self
             .build_candidates_from_hir(&hir)
             .map_err(|e| format!("Error building candidates {e:?}"))?;
 
-        println!("Candiates: {candidates:?}");
+        // println!("Candiates: {candidates:?}");
 
         let mut search_result = vec![];
         for cand in candidates.candidates {
@@ -290,7 +298,7 @@ impl<'i> GitSearcher<'i> {
                 })
                 .collect::<Vec<_>>();
 
-            println!("commit histories {commit_histories_per_word:?}");
+            // println!("commit histories {commit_histories_per_word:?}");
             let permutations = PermutationIterator::new(
                 &commit_histories_per_word
                     .iter()
@@ -299,7 +307,7 @@ impl<'i> GitSearcher<'i> {
             );
 
             for permutation in permutations {
-                println!("Permutations {permutation:?}");
+                // println!("Permutations {permutation:?}");
 
                 let mut selected_words = vec![];
                 let mut selected_bitmaps = vec![];

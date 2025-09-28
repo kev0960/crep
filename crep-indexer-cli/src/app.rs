@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
 use std::{io, sync::mpsc::channel};
 
 use crep_indexer::search::search_result::SearchResult;
 use ratatui::crossterm::event::{self, Event, KeyCode};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Layout, Rect},
@@ -10,7 +12,6 @@ use ratatui::{
     widgets::{Block, Paragraph},
 };
 use std::fs::{File, OpenOptions};
-use std::io::Write;
 use std::sync::{Arc, Mutex, RwLock, mpsc};
 use tui_input::{Input, backend::crossterm::EventHandler};
 
@@ -41,8 +42,6 @@ pub struct App<'a> {
     search_recv: Option<mpsc::Receiver<SearchRequest>>,
 
     search_result: Vec<SearchResult>,
-
-    log: File,
 }
 
 #[derive(Debug)]
@@ -70,17 +69,10 @@ impl<'a> App<'a> {
             search_send,
             search_recv: Some(search_recv),
             search_result: vec![],
-            log: OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open("debug.log")
-                .unwrap(),
         }
     }
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        writeln!(self.log, "Run start!").unwrap();
-
         {
             // Create a thread that handles the user input.
             let ui_send = self.ui_send.clone();
@@ -116,33 +108,30 @@ impl<'a> App<'a> {
                     }
                 }
             });
-        });
 
-        loop {
-            {
-                let state = self.state.read().unwrap();
-                if *state == State::Terminate {
+            loop {
+                {
+                    let state = self.state.read().unwrap();
+                    if *state == State::Terminate {
+                        break;
+                    }
+                }
+
+                terminal.draw(|frame| self.render(frame)).unwrap();
+
+                if let Ok(message) = self.ui_recv.recv() {
+                    match message {
+                        Message::Event(e) => self.handle_event(e).unwrap(),
+                        Message::SearchResults(results) => {
+                            self.search_result = results;
+                        }
+                        Message::Terminate => break,
+                    }
+                } else {
                     break;
                 }
             }
-
-            writeln!(self.log, "Draw!").unwrap();
-
-            terminal.draw(|frame| self.render(frame))?;
-
-            if let Ok(message) = self.ui_recv.recv() {
-                writeln!(self.log, "{message:?}").unwrap();
-                match message {
-                    Message::Event(e) => self.handle_event(e).unwrap(),
-                    Message::SearchResults(results) => {
-                        self.search_result = results;
-                    }
-                    Message::Terminate => break,
-                }
-            } else {
-                break;
-            }
-        }
+        });
 
         Ok(())
     }
@@ -228,7 +217,7 @@ impl<'a> App<'a> {
         );
 
         self.render_input(frame, input);
-        frame.render_widget(Paragraph::new(self.input.value()), search_results);
+        self.render_search_result(frame, search_results, &self.search_result);
         self.render_status(frame, status);
     }
 
@@ -244,6 +233,29 @@ impl<'a> App<'a> {
         // end of the input text and one line down from the border to the input line
         let x = self.input.visual_cursor().max(scroll) - scroll + 1;
         frame.set_cursor_position((area.x + x as u16, area.y + 1))
+    }
+
+    fn render_search_result(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        results: &[SearchResult],
+    ) {
+        let mut lines = vec![];
+        for result in results {
+            for (line, words) in &result.words_per_line {
+                if words.is_empty() {
+                    lines.push(Line::from(
+                        result.lines.get(line).unwrap().as_str(),
+                    ))
+                } else {
+                    let line = result.lines.get(line).unwrap().as_str();
+                    lines.push(get_highlighted_line(line, words))
+                }
+            }
+        }
+
+        frame.render_widget(Paragraph::new(lines), area);
     }
 
     fn render_status(&self, frame: &mut Frame, area: Rect) {
@@ -278,3 +290,65 @@ impl<'a> App<'a> {
         }
     }
 }
+
+pub fn get_highlighted_line<'a>(
+    line: &'a str,
+    positions: &[(String, usize)],
+) -> Line<'a> {
+    let mut result = vec![];
+
+    let mut current = 0;
+    for pos in positions {
+        let (word, start) = pos;
+
+        if current < *start {
+            result.push(Span::raw(truncate_long_line(&line[current..*start])));
+        }
+
+        result.push(Span::styled(
+            word.to_string().red().to_string(),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+
+        current = start + word.len();
+    }
+
+    if current < line.len() {
+        result.push(Span::raw(truncate_long_line(&line[current..])));
+    }
+
+    Line::from(result)
+}
+
+fn truncate_long_line(line: &str) -> String {
+    if line.len() < MAX_CHARS_TO_SHOW {
+        return line.to_owned();
+    }
+
+    format!(
+        "{} ... {}",
+        get_first_n_chars(line, MAX_CHARS_TO_SHOW / 2),
+        get_last_n_chars(line, MAX_CHARS_TO_SHOW / 2)
+    )
+}
+
+fn get_first_n_chars(line: &str, n: usize) -> &str {
+    let end_byte_index = line
+        .char_indices()
+        .nth(n)
+        .map_or(line.len(), |(idx, _)| idx);
+
+    &line[0..end_byte_index]
+}
+
+fn get_last_n_chars(line: &str, n: usize) -> &str {
+    let start_byte_index = line
+        .char_indices()
+        .rev()
+        .nth(n.saturating_sub(1))
+        .map_or(0, |(idx, _)| idx);
+
+    &line[start_byte_index..]
+}
+
+const MAX_CHARS_TO_SHOW: usize = 80;

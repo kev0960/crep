@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use aho_corasick::AhoCorasick;
 use regex::Regex;
@@ -8,7 +8,7 @@ use super::git_searcher::{Query, RawPerFileSearchResult};
 #[derive(Debug)]
 pub struct SearchResult {
     pub file_name: String,
-    pub matching_words: HashMap<String, MatchingWordPos>,
+    pub words_per_line: BTreeMap<usize, Vec<(String, usize)>>,
     pub lines: HashMap<usize, String>,
 }
 
@@ -50,17 +50,17 @@ impl SearchResult {
             }
         }
 
-        let mut line_to_words: HashMap<usize, Vec<(&str, usize)>> =
-            HashMap::new();
+        let mut words_per_line: BTreeMap<usize, Vec<(String, usize)>> =
+            BTreeMap::new();
 
         for (k, pos) in &matches {
-            line_to_words
+            words_per_line
                 .entry(pos.line_num)
                 .or_default()
-                .push((k, pos.col));
+                .push((k.to_string(), pos.col));
         }
 
-        for words in line_to_words.values_mut() {
+        for words in words_per_line.values_mut() {
             words.sort_by(|left, right| left.1.cmp(&right.1));
         }
 
@@ -77,10 +77,7 @@ impl SearchResult {
 
         Ok(Some(SearchResult {
             file_name: file_name.to_owned(),
-            matching_words: matches
-                .into_iter()
-                .map(|(k, pos)| (k.to_owned(), pos))
-                .collect(),
+            words_per_line,
             lines,
         }))
     }
