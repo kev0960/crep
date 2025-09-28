@@ -2,23 +2,17 @@ mod app;
 mod searcher;
 
 use std::{
-    io::{self, Write},
+    io::{self},
     path::Path,
 };
 
 use app::App;
 use clap::Parser;
-use crep_indexer::{
-    index::{
-        git_index::GitIndex,
-        indexer::{IndexResult, Indexer, IndexerConfig},
-    },
-    search::{git_searcher::GitSearcher, result_viewer::GitSearchResultViewer},
+use crep_indexer::index::{
+    git_index::GitIndex,
+    indexer::{IndexResult, Indexer, IndexerConfig},
 };
 
-use color_eyre::Result;
-use crossterm::event::{self, Event};
-use ratatui::{DefaultTerminal, Frame};
 use searcher::Searcher;
 
 #[derive(Parser, Debug)]
@@ -42,10 +36,7 @@ struct Args {
 fn main() -> io::Result<()> {
     color_eyre::install().unwrap();
 
-    let mut terminal = ratatui::init();
-
     let args = Args::parse();
-
     let index = match args.load_path {
         Some(load_path) => GitIndex::load(Path::new(&load_path)).unwrap(),
         _ => {
@@ -70,42 +61,11 @@ fn main() -> io::Result<()> {
         }
     };
 
-    /*
-    handle_query(index, &args.path);
-    */
+    let mut terminal = ratatui::init();
 
-    let searcher = Searcher::new(&index);
-
-    let result = App::new(
-        args.load_path,
-        &args.path,
-        args.main_branch.as_deref(),
-        args.save_path,
-    )
-    .run(&mut terminal);
+    let searcher = Searcher::new(&index, &args.path);
+    let result = App::new(searcher).run(&mut terminal);
 
     ratatui::restore();
     result
-}
-
-fn handle_query(index: GitIndex, path: &str) {
-    let mut searcher = GitSearcher::new(&index);
-    let viewer = GitSearchResultViewer::new(path, &index);
-
-    loop {
-        print!("Query :: ");
-        io::stdout().flush().unwrap();
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-
-        let input = input.trim();
-
-        if input.is_empty() {
-            break;
-        }
-
-        let results = searcher.regex_search(input).unwrap();
-        viewer.show_results(&results).unwrap();
-    }
 }

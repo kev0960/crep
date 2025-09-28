@@ -1,14 +1,8 @@
 use std::path::Path;
 
 use crep_indexer::{
-    index::{
-        git_index::GitIndex,
-        indexer::{IndexResult, Indexer, IndexerConfig},
-    },
-    search::{
-        git_searcher::{GitSearcher, RawPerFileSearchResult},
-        search_result::SearchResult,
-    },
+    index::git_index::GitIndex,
+    search::{git_searcher::GitSearcher, search_result::SearchResult},
 };
 use git2::{Oid, Repository};
 
@@ -18,9 +12,9 @@ pub struct Searcher<'a> {
     searcher: GitSearcher<'a>,
 }
 
-pub enum Query<'a> {
-    Regex(&'a str),
-    Key(&'a str),
+pub enum Query {
+    Regex(String),
+    RawString(String),
 }
 
 impl<'a> Searcher<'a> {
@@ -33,28 +27,38 @@ impl<'a> Searcher<'a> {
     }
 
     pub fn handle_query(
-        &self,
+        &mut self,
         query: &Query,
     ) -> anyhow::Result<Vec<SearchResult>> {
-        let search_results = vec![];
+        let mut search_results = vec![];
 
         let raw_results = match query {
             Query::Regex(regex) => self.searcher.regex_search(regex),
-            Query::Key(key) => Ok(self.searcher.search(key)),
-        }?;
+            Query::RawString(key) => Ok(self.searcher.search(key)),
+        };
+
+        if raw_results.is_err() {
+            anyhow::bail!("{raw_results:?}")
+        }
+
+        let raw_results = raw_results.unwrap();
 
         for result in raw_results {
-            for commit_id in result.overlapped_commits {
+            for commit_id in &result.overlapped_commits {
                 let (file_path, content) = self.read_file_at_commit(
                     result.file_id as usize,
                     commit_id as usize,
                 )?;
 
-                search_results.push(SearchResult::new(
+                let search_result = SearchResult::new(
                     &result,
                     file_path,
                     &content.lines().collect::<Vec<&str>>(),
-                )?);
+                )?;
+
+                if let Some(search_result) = search_result {
+                    search_results.push(search_result);
+                }
             }
         }
 
@@ -85,26 +89,5 @@ impl<'a> Searcher<'a> {
         } else {
             anyhow::bail!("Path is not a blob file {file_path}");
         }
-    }
-}
-
-fn handle_query(index: GitIndex, path: &str) {
-    let mut searcher = GitSearcher::new(&index);
-
-    loop {
-        print!("Query :: ");
-        io::stdout().flush().unwrap();
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-
-        let input = input.trim();
-
-        if input.is_empty() {
-            break;
-        }
-
-        let results = searcher.regex_search(input).unwrap();
-        viewer.show_results(&results).unwrap();
     }
 }
