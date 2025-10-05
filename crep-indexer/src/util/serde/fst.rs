@@ -1,7 +1,10 @@
 pub mod fst_set_to_vec {
     use fst::Set;
+    use serde::Deserialize;
+    use serde::Deserializer;
+    use serde::Serialize;
+    use serde::Serializer;
     use serde::de::Error as DeError;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(
         set: &Set<Vec<u8>>,
@@ -36,7 +39,10 @@ pub mod fst_set_to_vec {
             S: Serializer,
         {
             match set {
-                Some(inner) => super::serialize(inner, serializer),
+                Some(inner) => {
+                    let bytes = inner.stream().into_bytes();
+                    serializer.serialize_some(&bytes)
+                }
                 None => serializer.serialize_none(),
             }
         }

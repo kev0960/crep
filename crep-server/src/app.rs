@@ -1,9 +1,12 @@
 use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
-use leptos_router::{
-    components::{Route, Router, Routes},
-    StaticSegment,
-};
+use leptos_meta::provide_meta_context;
+use leptos_meta::MetaTags;
+use leptos_meta::Stylesheet;
+use leptos_meta::Title;
+use leptos_router::components::Route;
+use leptos_router::components::Router;
+use leptos_router::components::Routes;
+use leptos_router::StaticSegment;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {

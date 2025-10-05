@@ -1,21 +1,22 @@
-use std::{
-    collections::{BTreeSet, HashMap, HashSet},
-    path::Path,
-};
+use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::path::Path;
 
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
-use git2::{Oid, Repository};
+use git2::Oid;
+use git2::Repository;
 use owo_colors::OwoColorize;
 use regex::Regex;
 use roaring::RoaringBitmap;
 
-use crate::index::{git_index::GitIndex, git_indexer::CommitIndex};
+use crate::index::git_index::GitIndex;
+use crate::index::git_indexer::CommitIndex;
 
-use super::{
-    git_searcher::{Query, RawPerFileSearchResult},
-    line_formatter::highlight_line_by_positions,
-};
+use super::git_searcher::Query;
+use super::git_searcher::RawPerFileSearchResult;
+use super::line_formatter::highlight_line_by_positions;
 
 static MAX_SEARCH_RESULT: usize = 10;
 

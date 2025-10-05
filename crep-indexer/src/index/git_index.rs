@@ -1,19 +1,19 @@
-use std::{
-    collections::HashMap,
-    fs::File,
-    io::{BufReader, BufWriter},
-    path::Path,
-};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::path::Path;
 
 use bincode::serde as bserde;
 use fst::Set;
 use roaring::RoaringBitmap;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
-use super::{
-    document::Document,
-    git_indexer::{CommitIndex, FileId, GitIndexer},
-};
+use super::document::Document;
+use super::git_indexer::CommitIndex;
+use super::git_indexer::FileId;
+use super::git_indexer::GitIndexer;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitIndex {
@@ -83,15 +83,43 @@ impl GitIndex {
 mod tests {
     use bincode::serde;
 
+    use crate::{
+        index::document::WordKey,
+        util::fst::test_util::test::convert_fst_to_string_vec,
+    };
+
     use super::*;
 
     #[test]
     fn test_serde() {
+        let mut document_a = Document::new();
+        document_a.add_words(
+            1,
+            HashMap::from_iter(vec![("a", vec![1, 2, 3]), ("b", vec![3, 4])]),
+        );
+        document_a.add_words(2, HashMap::from_iter(vec![("b", vec![5])]));
+        document_a.remove_words(
+            3,
+            &[(
+                "a",
+                vec![
+                    WordKey {
+                        commit_id: 1,
+                        line: 1,
+                    },
+                    WordKey {
+                        commit_id: 1,
+                        line: 2,
+                    },
+                ],
+            )],
+        );
+
         let index = GitIndex {
-            commit_index_to_commit_id: vec![],
+            commit_index_to_commit_id: vec![[0; 20], [1; 20]],
             commit_id_to_commit_index: HashMap::new(),
-            file_id_to_path: vec![],
-            file_id_to_document: HashMap::new(),
+            file_id_to_path: vec!["/a".to_owned(), "/b".to_owned()],
+            file_id_to_document: HashMap::from_iter(vec![(1, document_a)]),
             word_to_file_id_ever_contained: HashMap::new(),
             all_words: Set::from_iter(["a", "ab", "abc"].iter()).unwrap(),
         };
@@ -106,13 +134,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(decoded.all_words.len(), 3);
-        let v: Vec<String> = decoded
-            .all_words
-            .stream()
-            .into_bytes()
-            .into_iter()
-            .map(|v| str::from_utf8(v.as_slice()).unwrap().to_owned())
-            .collect();
+        let v: Vec<String> = convert_fst_to_string_vec(&decoded.all_words);
 
         assert_eq!(v, vec!["a", "ab", "abc"])
     }

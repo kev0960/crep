@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use crep_indexer::{
-    index::git_index::GitIndex,
-    search::{git_searcher::GitSearcher, search_result::SearchResult},
-};
-use git2::{Oid, Repository};
+use crep_indexer::index::git_index::GitIndex;
+use crep_indexer::search::git_searcher::GitSearcher;
+use crep_indexer::search::search_result::SearchResult;
+use git2::Oid;
+use git2::Repository;
 
 pub struct Searcher<'a> {
     repo: Repository,
@@ -12,6 +12,7 @@ pub struct Searcher<'a> {
     searcher: GitSearcher<'a>,
 }
 
+#[derive(Debug)]
 pub enum Query {
     Regex(String),
     RawString(String),

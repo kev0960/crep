@@ -1,19 +1,18 @@
 mod app;
+mod raw_searcher;
 mod searcher;
 
-use std::{
-    fs::File,
-    io::{self},
-    path::Path,
-};
+use std::io::{self};
+use std::path::Path;
 
 use app::App;
 use clap::Parser;
-use crep_indexer::index::{
-    git_index::GitIndex,
-    indexer::{IndexResult, Indexer, IndexerConfig},
-};
+use crep_indexer::index::git_index::GitIndex;
+use crep_indexer::index::indexer::IndexResult;
+use crep_indexer::index::indexer::Indexer;
+use crep_indexer::index::indexer::IndexerConfig;
 
+use raw_searcher::handle_query;
 use searcher::Searcher;
 
 #[derive(Parser, Debug)]
@@ -32,18 +31,37 @@ struct Args {
 
     #[arg(short, long)]
     save_path: Option<String>,
+
+    #[arg(short, long)]
+    debug: bool,
 }
 
 fn main() -> io::Result<()> {
-    color_eyre::install().unwrap();
-
-    // let file = File::create("debug.log").unwrap();
-    // let _redir = Redirect::stdout(file).unwrap();
-
-    let mut terminal = ratatui::init();
-
     let args = Args::parse();
-    let index = match args.load_path {
+
+    let index = build_index(&args);
+    let mut searcher = Searcher::new(&index, &args.path);
+
+    if args.debug {
+        env_logger::init();
+
+        handle_query(&mut searcher).unwrap();
+
+        Ok(())
+    } else {
+        color_eyre::install().unwrap();
+        let mut terminal = ratatui::init();
+        terminal.clear().unwrap();
+
+        let result = App::new(searcher).run(&mut terminal);
+
+        ratatui::restore();
+        result
+    }
+}
+
+fn build_index(args: &Args) -> GitIndex {
+    match &args.load_path {
         Some(load_path) => GitIndex::load(Path::new(&load_path)).unwrap(),
         _ => {
             let indexer = Indexer::new(&IndexerConfig {
@@ -56,7 +74,7 @@ fn main() -> io::Result<()> {
 
             match index {
                 IndexResult::GitIndex(index) => {
-                    if let Some(save_path) = args.save_path {
+                    if let Some(save_path) = &args.save_path {
                         index.save(std::path::Path::new(&save_path)).unwrap();
                     }
 
@@ -65,11 +83,5 @@ fn main() -> io::Result<()> {
                 _ => panic!("Only Git index is supported"),
             }
         }
-    };
-
-    let searcher = Searcher::new(&index, &args.path);
-    let result = App::new(searcher).run(&mut terminal);
-
-    ratatui::restore();
-    result
+    }
 }

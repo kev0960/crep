@@ -1,15 +1,18 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 use aho_corasick::AhoCorasick;
 use regex::Regex;
 
-use super::git_searcher::{Query, RawPerFileSearchResult};
+use super::git_searcher::Query;
+use super::git_searcher::RawPerFileSearchResult;
 
 #[derive(Debug)]
 pub struct SearchResult {
     pub file_name: String,
     pub words_per_line: BTreeMap<usize, Vec<(String, usize)>>,
-    pub lines: HashMap<usize, String>,
+    pub lines: BTreeMap<usize, String>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -73,7 +76,7 @@ impl SearchResult {
             .collect::<HashSet<usize>>()
             .into_iter()
             .map(|line_num| (line_num, file_content[line_num].to_owned()))
-            .collect::<HashMap<usize, String>>();
+            .collect::<BTreeMap<usize, String>>();
 
         Ok(Some(SearchResult {
             file_name: file_name.to_owned(),

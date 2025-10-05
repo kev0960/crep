@@ -1,21 +1,32 @@
-use std::collections::BTreeMap;
-use std::{io, sync::mpsc::channel};
+use std::io;
+use std::sync::mpsc::channel;
 
 use crep_indexer::search::search_result::SearchResult;
-use ratatui::crossterm::event::{self, Event, KeyCode};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::{
-    DefaultTerminal, Frame,
-    layout::{Constraint, Layout, Rect},
-    style::Stylize,
-    widgets::{Block, Paragraph},
-};
-use std::fs::{File, OpenOptions};
-use std::sync::{Arc, Mutex, RwLock, mpsc};
-use tui_input::{Input, backend::crossterm::EventHandler};
+use ratatui::DefaultTerminal;
+use ratatui::Frame;
+use ratatui::crossterm::event::Event;
+use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{self};
+use ratatui::layout::Constraint;
+use ratatui::layout::Layout;
+use ratatui::layout::Rect;
+use ratatui::style::Color;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::text::Span;
+use ratatui::widgets::Block;
+use ratatui::widgets::Paragraph;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::RwLock;
+use std::sync::mpsc;
+use tui_input::Input;
+use tui_input::backend::crossterm::EventHandler;
 
-use crate::searcher::{Query, Searcher};
+use crate::searcher::Query;
+use crate::searcher::Searcher;
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum State {
@@ -38,8 +49,8 @@ pub struct App<'a> {
     ui_send: mpsc::Sender<Message>,
     ui_recv: mpsc::Receiver<Message>,
 
-    search_send: mpsc::Sender<SearchRequest>,
-    search_recv: Option<mpsc::Receiver<SearchRequest>>,
+    search_send: mpsc::Sender<SearchMessage>,
+    search_recv: Option<mpsc::Receiver<SearchMessage>>,
 
     search_result: Vec<SearchResult>,
 }
@@ -51,8 +62,9 @@ enum Message {
     Terminate,
 }
 
-struct SearchRequest {
-    query: Query,
+enum SearchMessage {
+    SearchRequest(Query),
+    Terminate,
 }
 
 impl<'a> App<'a> {
@@ -99,12 +111,19 @@ impl<'a> App<'a> {
                     }
 
                     let mut searcher = searcher.lock().unwrap();
-                    if let Ok(search_results) =
-                        searcher.handle_query(&last.query)
-                    {
-                        ui_send
-                            .send(Message::SearchResults(search_results))
-                            .unwrap();
+                    match last {
+                        SearchMessage::Terminate => break,
+                        SearchMessage::SearchRequest(query) => {
+                            if let Ok(search_results) =
+                                searcher.handle_query(&query)
+                            {
+                                ui_send
+                                    .send(Message::SearchResults(
+                                        search_results,
+                                    ))
+                                    .unwrap();
+                            }
+                        }
                     }
                 }
             });
@@ -148,6 +167,9 @@ impl<'a> App<'a> {
                     State::Control => {
                         *self.state.write().unwrap() = State::Terminate;
                         self.ui_send.send(Message::Terminate).unwrap();
+                        self.search_send
+                            .send(SearchMessage::Terminate)
+                            .unwrap();
                     }
                     State::Input(_) => {
                         *self.state.write().unwrap() = State::Control;
@@ -175,20 +197,20 @@ impl<'a> App<'a> {
                         match query_type {
                             QueryType::Regex => {
                                 self.search_send
-                                    .send(SearchRequest {
-                                        query: Query::Regex(
+                                    .send(SearchMessage::SearchRequest(
+                                        Query::Regex(
                                             self.input.value().to_owned(),
                                         ),
-                                    })
+                                    ))
                                     .unwrap();
                             }
                             QueryType::RawString => {
                                 self.search_send
-                                    .send(SearchRequest {
-                                        query: Query::RawString(
+                                    .send(SearchMessage::SearchRequest(
+                                        Query::RawString(
                                             self.input.value().to_owned(),
                                         ),
-                                    })
+                                    ))
                                     .unwrap();
                             }
                         }
@@ -243,16 +265,21 @@ impl<'a> App<'a> {
     ) {
         let mut lines = vec![];
         for result in results {
-            for (line, words) in &result.words_per_line {
-                if words.is_empty() {
-                    lines.push(Line::from(
-                        result.lines.get(line).unwrap().as_str(),
-                    ))
-                } else {
-                    let line = result.lines.get(line).unwrap().as_str();
-                    lines.push(get_highlighted_line(line, words))
-                }
+            lines.push(Line::from(vec![Span::raw(format!(
+                "File: {}",
+                result.file_name
+            ))]));
+
+            for (line_num, line) in &result.lines {
+                let words = result.words_per_line.get(line_num);
+                lines.push(get_highlighted_line(
+                    line,
+                    *line_num,
+                    words.unwrap_or(&Vec::new()),
+                ))
             }
+
+            lines.push(Line::raw(""));
         }
 
         frame.render_widget(Paragraph::new(lines), area);
@@ -291,11 +318,15 @@ impl<'a> App<'a> {
     }
 }
 
-pub fn get_highlighted_line<'a>(
+fn get_highlighted_line<'a>(
     line: &'a str,
+    line_number: usize,
     positions: &[(String, usize)],
 ) -> Line<'a> {
-    let mut result = vec![];
+    let mut result = vec![Span::styled(
+        format!("{:>6}| ", line_number + 1),
+        Style::default().fg(Color::LightYellow),
+    )];
 
     let mut current = 0;
     for pos in positions {
@@ -306,7 +337,7 @@ pub fn get_highlighted_line<'a>(
         }
 
         result.push(Span::styled(
-            word.to_string().red().to_string(),
+            word.to_string(),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ));
 
