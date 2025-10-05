@@ -1,10 +1,10 @@
 use fst::Set;
 use priority_queue::PriorityQueue;
-use serde::{Deserialize, Serialize};
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-};
+use serde::Deserialize;
+use serde::Serialize;
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 use roaring::RoaringBitmap;
 
@@ -206,6 +206,8 @@ impl Document {
 mod document_test {
     use super::*;
 
+    use bincode::serde;
+
     impl PartialEq for Document {
         fn eq(&self, other: &Self) -> bool {
             if self.words != other.words {
@@ -285,6 +287,67 @@ mod document_test {
                 all_words: None
             }
         );
+    }
+
+    #[test]
+    fn serde_document_test() {
+        let document =
+            Document {
+                words: HashMap::from([
+                    (
+                        "bye".to_owned(),
+                        WordIndex {
+                            word_history: PriorityQueue::from_iter(vec![
+                                (
+                                    WordKey {
+                                        commit_id: 1,
+                                        line: 123,
+                                    },
+                                    CommitEndPriority(None),
+                                ),
+                                (
+                                    WordKey {
+                                        commit_id: 2,
+                                        line: 10,
+                                    },
+                                    CommitEndPriority(Some(3)),
+                                ),
+                            ]),
+                            commit_inclutivity:
+                                RoaringBitmap::from_sorted_iter(1..5).unwrap(),
+                        },
+                    ),
+                    (
+                        "hel".to_owned(),
+                        WordIndex {
+                            word_history: PriorityQueue::from_iter(vec![(
+                                WordKey {
+                                    commit_id: 8,
+                                    line: 12,
+                                },
+                                CommitEndPriority(Some(6)),
+                            )]),
+                            commit_inclutivity:
+                                RoaringBitmap::from_sorted_iter(3..8).unwrap(),
+                        },
+                    ),
+                ]),
+                all_words: Some(
+                    Set::from_iter(vec!["bye", "hel", "llo"]).unwrap(),
+                ),
+            };
+
+        let encoded =
+            serde::encode_to_vec(&document, bincode::config::standard());
+        assert!(encoded.is_ok());
+
+        let (decoded, _): (Document, usize) = serde::decode_from_slice(
+            encoded.unwrap().as_slice(),
+            bincode::config::standard(),
+        )
+        .unwrap();
+
+        assert_eq!(decoded, document);
     }
 }
 

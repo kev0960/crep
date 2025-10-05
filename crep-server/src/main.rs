@@ -2,7 +2,8 @@ use axum::Router;
 use crep_server::app::*;
 use leptos::logging::log;
 use leptos::prelude::*;
-use leptos_axum::{LeptosRoutes, generate_route_list};
+use leptos_axum::generate_route_list;
+use leptos_axum::LeptosRoutes;
 
 #[tokio::main]
 pub async fn main() {

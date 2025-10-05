@@ -1,5 +1,7 @@
 use owo_colors::OwoColorize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::index::index::FileToWordPos;
 

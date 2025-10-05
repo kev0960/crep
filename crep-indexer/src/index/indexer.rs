@@ -1,15 +1,19 @@
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
+use log::info;
 use roaring::RoaringBitmap;
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
+use std::path::Path;
 use walkdir::WalkDir;
 
-use crate::tokenizer::{Tokenizer, WordPosition};
+use crate::tokenizer::Tokenizer;
+use crate::tokenizer::WordPosition;
 
-use super::{
-    git_index::GitIndex,
-    git_indexer::{GitIndexer, GitIndexerConfig},
-    index::{FileToWordPos, Index},
-};
+use super::git_index::GitIndex;
+use super::git_indexer::GitIndexer;
+use super::git_indexer::GitIndexerConfig;
+use super::index::FileToWordPos;
+use super::index::Index;
 
 pub struct Indexer {
     root_dir: String,
@@ -54,7 +58,7 @@ impl Indexer {
                 Ok(IndexResult::GitIndex(GitIndex::build(indexer)))
             }
             Err(_) => {
-                println!(
+                info!(
                     "Non Git-directory. Only indexing the current directory."
                 );
 

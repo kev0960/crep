@@ -1,24 +1,29 @@
 use std::collections::HashSet;
 
 use anyhow::anyhow;
-use fst::{IntoStreamer, Set};
+use fst::IntoStreamer;
+use fst::Set;
+use log::debug;
 use lru::LruCache;
 use regex_automata::dense;
-use regex_syntax::hir::{Hir, HirKind};
+use regex_syntax::hir::Hir;
+use regex_syntax::hir::HirKind;
 use roaring::RoaringBitmap;
 
-use crate::{
-    index::{document::Document, git_index::GitIndex, git_indexer::FileId},
-    search::permutation::PermutationIterator,
-    tokenizer::{Tokenizer, TokenizerMethod},
-    util::bitmap::utils::{
-        intersect_bitmap_vec, intersect_bitmaps, union_bitmaps,
-    },
-};
+use crate::index::document::Document;
+use crate::index::git_index::GitIndex;
+use crate::index::git_indexer::FileId;
+use crate::search::permutation::PermutationIterator;
+use crate::tokenizer::Tokenizer;
+use crate::tokenizer::TokenizerMethod;
+use crate::util::bitmap::utils::intersect_bitmap_vec;
+use crate::util::bitmap::utils::intersect_bitmaps;
+use crate::util::bitmap::utils::union_bitmaps;
 
-use super::regex_search::{
-    RegexOrString, RegexSearchCandidates, SearchPartTrigram, Trigram,
-};
+use super::regex_search::RegexOrString;
+use super::regex_search::RegexSearchCandidates;
+use super::regex_search::SearchPartTrigram;
+use super::regex_search::Trigram;
 
 pub struct GitSearcher<'i> {
     index: &'i GitIndex,
@@ -36,6 +41,10 @@ impl<'i> GitSearcher<'i> {
     }
 
     pub fn search(&mut self, query: &str) -> Vec<RawPerFileSearchResult> {
+        if query.is_empty() {
+            return vec![];
+        }
+
         let words = query.split_whitespace();
         let mut documents_containing_each_word: Vec<(String, RoaringBitmap)> =
             vec![];
@@ -46,7 +55,6 @@ impl<'i> GitSearcher<'i> {
                 return vec![];
             }
 
-            println!("{word} ==> {results:?}");
             documents_containing_each_word.push(results.unwrap());
         }
 
@@ -57,6 +65,10 @@ impl<'i> GitSearcher<'i> {
         &mut self,
         query: &str,
     ) -> Result<Vec<RawPerFileSearchResult>, String> {
+        if query.is_empty() {
+            return Ok(vec![]);
+        }
+
         let hir = regex_syntax::parse(query);
 
         if hir.is_err() {
@@ -67,13 +79,13 @@ impl<'i> GitSearcher<'i> {
         }
 
         let hir = hir.unwrap();
-        println!("Hir : {hir:?}");
+        debug!("Hir : {hir:?}");
 
         let candidates = self
             .build_candidates_from_hir(&hir)
             .map_err(|e| format!("Error building candidates {e:?}"))?;
 
-        println!("Candiates: {candidates:?}");
+        debug!("Candiates: {candidates:?}");
 
         let mut search_result = vec![];
         for cand in candidates.candidates {
@@ -290,7 +302,7 @@ impl<'i> GitSearcher<'i> {
                 })
                 .collect::<Vec<_>>();
 
-            println!("commit histories {commit_histories_per_word:?}");
+            debug!("commit histories {commit_histories_per_word:?}");
             let permutations = PermutationIterator::new(
                 &commit_histories_per_word
                     .iter()
@@ -299,7 +311,7 @@ impl<'i> GitSearcher<'i> {
             );
 
             for permutation in permutations {
-                println!("Permutations {permutation:?}");
+                debug!("Permutations {permutation:?}");
 
                 let mut selected_words = vec![];
                 let mut selected_bitmaps = vec![];

@@ -1,23 +1,28 @@
-use crate::{
-    git::diff::{FileDiffTracker, LineDeleteResult},
-    tokenizer::{Tokenizer, TokenizerMethod, WordPosition},
-};
+use crate::git::diff::FileDiffTracker;
+use crate::git::diff::LineDeleteResult;
+use crate::tokenizer::Tokenizer;
+use crate::tokenizer::TokenizerMethod;
+use crate::tokenizer::WordPosition;
 use anyhow::Result;
-use git2::{
-    Delta, DiffFlags, ObjectType, Repository, Sort, Tree, TreeWalkResult,
-};
-use indicatif::{ProgressBar, ProgressStyle};
+use git2::Delta;
+use git2::DiffFlags;
+use git2::ObjectType;
+use git2::Repository;
+use git2::Sort;
+use git2::Tree;
+use git2::TreeWalkResult;
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
+use log::debug;
 use roaring::RoaringBitmap;
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    path::Path,
-};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::path::Path;
 
-use super::{
-    check_binary::Utf8FileChecker,
-    document::{Document, WordKey},
-};
+use super::check_binary::Utf8FileChecker;
+use super::document::Document;
+use super::document::WordKey;
 
 pub type CommitIndex = usize;
 pub type FileId = usize;
@@ -119,7 +124,7 @@ impl GitIndexer {
                 bar.set_message(commit.id().to_string());
                 bar.inc(1);
             } else {
-                println!("Commit {}", commit.id());
+                debug!("Commit {}", commit.id());
             }
 
             let mut commit_id = [0u8; 20];

@@ -1,16 +1,19 @@
-use std::{
-    io::{self, Write},
-    path::Path,
-};
+mod app;
+mod raw_searcher;
+mod searcher;
 
+use std::io::{self};
+use std::path::Path;
+
+use app::App;
 use clap::Parser;
-use crep_indexer::{
-    index::{
-        git_index::GitIndex,
-        indexer::{IndexResult, Indexer, IndexerConfig},
-    },
-    search::{git_searcher::GitSearcher, result_viewer::GitSearchResultViewer},
-};
+use crep_indexer::index::git_index::GitIndex;
+use crep_indexer::index::indexer::IndexResult;
+use crep_indexer::index::indexer::Indexer;
+use crep_indexer::index::indexer::IndexerConfig;
+
+use raw_searcher::handle_query;
+use searcher::Searcher;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -28,12 +31,37 @@ struct Args {
 
     #[arg(short, long)]
     save_path: Option<String>,
+
+    #[arg(short, long)]
+    debug: bool,
 }
 
-fn main() {
+fn main() -> io::Result<()> {
     let args = Args::parse();
 
-    let index = match args.load_path {
+    let index = build_index(&args);
+    let mut searcher = Searcher::new(&index, &args.path);
+
+    if args.debug {
+        env_logger::init();
+
+        handle_query(&mut searcher).unwrap();
+
+        Ok(())
+    } else {
+        color_eyre::install().unwrap();
+        let mut terminal = ratatui::init();
+        terminal.clear().unwrap();
+
+        let result = App::new(searcher).run(&mut terminal);
+
+        ratatui::restore();
+        result
+    }
+}
+
+fn build_index(args: &Args) -> GitIndex {
+    match &args.load_path {
         Some(load_path) => GitIndex::load(Path::new(&load_path)).unwrap(),
         _ => {
             let indexer = Indexer::new(&IndexerConfig {
@@ -46,7 +74,7 @@ fn main() {
 
             match index {
                 IndexResult::GitIndex(index) => {
-                    if let Some(save_path) = args.save_path {
+                    if let Some(save_path) = &args.save_path {
                         index.save(std::path::Path::new(&save_path)).unwrap();
                     }
 
@@ -55,57 +83,5 @@ fn main() {
                 _ => panic!("Only Git index is supported"),
             }
         }
-    };
-
-    handle_query(index, &args.path);
-    /*
-        let indexer = Indexer::new("/home/jaebum/Halfmore");
-        let index = indexer.index_directory();
-
-        let searcher = Searcher::new(&index);
-
-        let mut result_viewer = SearchResultViewer::new();
-
-        loop {
-            print!("Query :: ");
-            io::stdout().flush().unwrap();
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
-
-            let input = input.trim();
-
-            if input.is_empty() {
-                break;
-            }
-
-            let results = searcher.search(input);
-            println!(
-                "{}",
-                result_viewer.show_results(&results, &index.file_to_word_pos)
-            );
-        }
-    */
-}
-
-fn handle_query(index: GitIndex, path: &str) {
-    let mut searcher = GitSearcher::new(&index);
-    let viewer = GitSearchResultViewer::new(path, &index);
-
-    loop {
-        print!("Query :: ");
-        io::stdout().flush().unwrap();
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-
-        let input = input.trim();
-
-        if input.is_empty() {
-            break;
-        }
-
-        let results = searcher.regex_search(input).unwrap();
-        viewer.show_results(&results).unwrap();
     }
 }
