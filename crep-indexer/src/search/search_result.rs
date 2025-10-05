@@ -53,6 +53,10 @@ impl SearchResult {
             }
         }
 
+        if matches.is_empty() {
+            return Ok(None);
+        }
+
         let mut words_per_line: BTreeMap<usize, Vec<(String, usize)>> =
             BTreeMap::new();
 
