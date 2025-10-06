@@ -53,6 +53,8 @@ pub struct Document {
 
     #[serde(with = "crate::util::serde::fst::fst_set_to_vec::option")]
     pub all_words: Option<Set<Vec<u8>>>,
+
+    pub doc_modified_commits: RoaringBitmap,
 }
 
 impl Document {
@@ -60,6 +62,7 @@ impl Document {
         Self {
             words: HashMap::new(),
             all_words: None,
+            doc_modified_commits: RoaringBitmap::new(),
         }
     }
 
@@ -83,6 +86,7 @@ impl Document {
 
             word_index.commit_inclutivity.insert(commit_index as u32);
         }
+        self.doc_modified_commits.insert(commit_index as u32);
     }
 
     pub fn remove_words(
@@ -108,6 +112,8 @@ impl Document {
         for word in modified_words {
             self.update_commit_inclutivity(commit_index, word);
         }
+
+        self.doc_modified_commits.insert(commit_index as u32);
     }
 
     pub fn remove_document(&mut self, commit_index: CommitIndex) {
@@ -145,6 +151,8 @@ impl Document {
                 );
             }
         }
+
+        self.doc_modified_commits.insert(commit_index as u32);
     }
 
     fn update_commit_inclutivity(
@@ -284,7 +292,8 @@ mod document_test {
                         }
                     )
                 ]),
-                all_words: None
+                all_words: None,
+                doc_modified_commits: RoaringBitmap::from([1])
             }
         );
     }
@@ -335,6 +344,7 @@ mod document_test {
                 all_words: Some(
                     Set::from_iter(vec!["bye", "hel", "llo"]).unwrap(),
                 ),
+                doc_modified_commits: RoaringBitmap::from_iter([1, 3, 5, 8]),
             };
 
         let encoded =

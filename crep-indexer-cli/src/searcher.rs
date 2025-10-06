@@ -2,9 +2,11 @@ use std::path::Path;
 
 use crep_indexer::index::git_index::GitIndex;
 use crep_indexer::search::git_searcher::GitSearcher;
+use crep_indexer::search::git_searcher::SearchOption;
 use crep_indexer::search::search_result::SearchResult;
 use git2::Oid;
 use git2::Repository;
+use log::debug;
 
 pub struct Searcher<'a> {
     repo: Repository,
@@ -34,8 +36,18 @@ impl<'a> Searcher<'a> {
         let mut search_results = vec![];
 
         let raw_results = match query {
-            Query::Regex(regex) => self.searcher.regex_search(regex),
-            Query::RawString(key) => Ok(self.searcher.search(key)),
+            Query::Regex(regex) => self.searcher.regex_search(
+                regex,
+                Some(SearchOption {
+                    max_num_to_find: Some(10),
+                }),
+            ),
+            Query::RawString(key) => Ok(self.searcher.search(
+                key,
+                Some(SearchOption {
+                    max_num_to_find: Some(10),
+                }),
+            )),
         };
 
         if raw_results.is_err() {
@@ -45,7 +57,11 @@ impl<'a> Searcher<'a> {
         let raw_results = raw_results.unwrap();
 
         for result in raw_results {
+            debug!("Checking {result:?}");
+
             for commit_id in &result.overlapped_commits {
+                debug!("Checking {commit_id}");
+
                 let (file_path, content) = self.read_file_at_commit(
                     result.file_id as usize,
                     commit_id as usize,

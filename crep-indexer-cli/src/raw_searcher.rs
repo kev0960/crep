@@ -1,4 +1,5 @@
 use color_eyre::owo_colors::OwoColorize;
+use log::debug;
 
 use crate::searcher::{Query, Searcher};
 
@@ -12,10 +13,11 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
         let query = string_to_query(query);
 
         let results = searcher.handle_query(&query)?;
-        println!("{query:?} {results:?}");
 
         let mut lines: Vec<String> = vec![];
         for result in results {
+            debug!("Parsing result : {result:?}");
+
             lines.push(format!("File: {}", result.file_name));
 
             for (line_num, line) in &result.lines {

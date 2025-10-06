@@ -613,6 +613,7 @@ dependencies = [
  "crossterm 0.29.0",
  "env_logger",
  "git2",
+ "log",
  "ratatui",
  "tui-input",
 ]

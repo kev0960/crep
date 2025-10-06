@@ -30,6 +30,11 @@ pub struct GitSearcher<'i> {
     word_to_docs_cache: LruCache<String, Option<(String, RoaringBitmap)>>,
 }
 
+#[derive(Default)]
+pub struct SearchOption {
+    pub max_num_to_find: Option<usize>,
+}
+
 impl<'i> GitSearcher<'i> {
     pub fn new(index: &'i GitIndex) -> Self {
         Self {
@@ -40,7 +45,11 @@ impl<'i> GitSearcher<'i> {
         }
     }
 
-    pub fn search(&mut self, query: &str) -> Vec<RawPerFileSearchResult> {
+    pub fn search(
+        &mut self,
+        query: &str,
+        option: Option<SearchOption>,
+    ) -> Vec<RawPerFileSearchResult> {
         if query.is_empty() {
             return vec![];
         }
@@ -58,19 +67,19 @@ impl<'i> GitSearcher<'i> {
             documents_containing_each_word.push(results.unwrap());
         }
 
-        self.find_overlapping_document(&documents_containing_each_word)
+        self.find_overlapping_document(&documents_containing_each_word, option)
     }
 
     pub fn regex_search(
         &mut self,
         query: &str,
+        option: Option<SearchOption>,
     ) -> Result<Vec<RawPerFileSearchResult>, String> {
         if query.is_empty() {
             return Ok(vec![]);
         }
 
         let hir = regex_syntax::parse(query);
-
         if hir.is_err() {
             return Err(format!(
                 "Failed to parse regex {query}. Error: {:?}",
@@ -88,7 +97,11 @@ impl<'i> GitSearcher<'i> {
         debug!("Candiates: {candidates:?}");
 
         let mut search_result = vec![];
+        let option = option.unwrap_or_default();
+
         for cand in candidates.candidates {
+            debug!("Checking candidate: {cand:?}");
+
             let trigrams = cand.trigrams;
 
             if trigrams.is_empty() {
@@ -134,6 +147,8 @@ impl<'i> GitSearcher<'i> {
             }
 
             let candidate_docs = intersect_bitmap_vec(docs_bitmaps).unwrap();
+            debug!("Found candidate docs: {candidate_docs:?}");
+
             for doc_id in candidate_docs {
                 let doc =
                     self.index.file_id_to_document.get(&(doc_id as FileId));
@@ -155,7 +170,13 @@ impl<'i> GitSearcher<'i> {
                         file_id: doc_id,
                         query: Query::Regex(query.to_owned()),
                         overlapped_commits: history,
-                    })
+                    });
+
+                    if let Some(max_num_to_find) = option.max_num_to_find
+                        && search_result.len() >= max_num_to_find
+                    {
+                        return Ok(search_result);
+                    }
                 }
             }
         }
@@ -279,12 +300,14 @@ impl<'i> GitSearcher<'i> {
     fn find_overlapping_document(
         &self,
         bitmaps: &'i Vec<(String, RoaringBitmap)>,
+        option: Option<SearchOption>,
     ) -> Vec<RawPerFileSearchResult> {
         let mut result = vec![];
 
         let docs_for_each_word =
             bitmaps.iter().map(|b| &b.1).collect::<Vec<_>>();
         let intersected_docs = intersect_bitmaps(&docs_for_each_word).unwrap();
+        let option = option.unwrap_or_default();
 
         for file_id in intersected_docs {
             let document =
@@ -340,6 +363,12 @@ impl<'i> GitSearcher<'i> {
                     file_id,
                     overlapped_commits,
                 });
+
+                if let Some(max_num_to_find) = option.max_num_to_find
+                    && result.len() >= max_num_to_find
+                {
+                    return result;
+                }
             }
         }
 
@@ -401,7 +430,7 @@ impl<'i> GitSearcher<'i> {
             return Ok(None);
         }
 
-        let mut commit_bitmaps = vec![];
+        let mut commit_bitmaps = vec![doc.doc_modified_commits.clone()];
 
         for trigram in trigrams {
             if doc.all_words.is_none() {
@@ -412,6 +441,8 @@ impl<'i> GitSearcher<'i> {
                 trigram,
                 doc.all_words.as_ref().unwrap(),
             )?;
+
+            debug!("Matching trigrams : {matching_trigram:?}");
 
             let commit_histories_that_contains_word = matching_trigram
                 .iter()
@@ -424,7 +455,9 @@ impl<'i> GitSearcher<'i> {
 
             commit_bitmaps.push(
                 union_bitmaps(&commit_histories_that_contains_word).unwrap(),
-            )
+            );
+
+            debug!("Commit bitmaps: {:?}", commit_bitmaps.last());
         }
 
         Ok(intersect_bitmap_vec(commit_bitmaps))
