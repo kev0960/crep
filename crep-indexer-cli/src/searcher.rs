@@ -57,7 +57,10 @@ impl<'a> Searcher<'a> {
         let raw_results = raw_results.unwrap();
 
         for result in raw_results {
-            debug!("Checking {result:?}");
+            debug!(
+                "Checking {result:?} at {}",
+                self.index.file_id_to_path[result.file_id as usize]
+            );
 
             for commit_id in &result.overlapped_commits {
                 debug!("Checking {commit_id}");

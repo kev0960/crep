@@ -1,4 +1,5 @@
 mod app;
+mod logger;
 mod raw_searcher;
 mod searcher;
 
@@ -12,6 +13,8 @@ use crep_indexer::index::indexer::IndexResult;
 use crep_indexer::index::indexer::Indexer;
 use crep_indexer::index::indexer::IndexerConfig;
 
+use log::{LevelFilter, debug};
+use logger::init_file_logger;
 use raw_searcher::handle_query;
 use searcher::Searcher;
 
@@ -34,6 +37,9 @@ struct Args {
 
     #[arg(short, long)]
     debug: bool,
+
+    #[arg(long)]
+    log: Option<String>,
 }
 
 fn main() -> io::Result<()> {
@@ -42,6 +48,7 @@ fn main() -> io::Result<()> {
     let index = build_index(&args);
     let mut searcher = Searcher::new(&index, &args.path);
 
+    println!("Debug {}", args.debug);
     if args.debug {
         env_logger::init();
 
@@ -49,7 +56,10 @@ fn main() -> io::Result<()> {
 
         Ok(())
     } else {
-        color_eyre::install().unwrap();
+        if let Some(log) = args.log {
+            init_file_logger(&log, LevelFilter::Debug).unwrap();
+        }
+
         let mut terminal = ratatui::init();
         terminal.clear().unwrap();
 

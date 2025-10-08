@@ -337,7 +337,7 @@ impl<'i> GitSearcher<'i> {
                 debug!("Permutations {permutation:?}");
 
                 let mut selected_words = vec![];
-                let mut selected_bitmaps = vec![];
+                let mut selected_bitmaps = vec![&document.doc_modified_commits];
 
                 for (index, perm_idx) in permutation.iter().enumerate() {
                     selected_words.push(

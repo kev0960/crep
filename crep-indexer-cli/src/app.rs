@@ -1,6 +1,8 @@
 use std::io;
 use std::sync::mpsc::channel;
 
+use chrono::DateTime;
+use chrono::Local;
 use crep_indexer::search::search_result::SearchResult;
 use ratatui::DefaultTerminal;
 use ratatui::Frame;
@@ -53,6 +55,7 @@ pub struct App<'a> {
     search_recv: Option<mpsc::Receiver<SearchMessage>>,
 
     search_result: Vec<SearchResult>,
+    log: Vec<(DateTime<Local>, String)>,
 }
 
 #[derive(Debug)]
@@ -60,6 +63,7 @@ enum Message {
     Event(Event),
     SearchResults(Vec<SearchResult>),
     Terminate,
+    Log(String),
 }
 
 enum SearchMessage {
@@ -81,6 +85,7 @@ impl<'a> App<'a> {
             search_send,
             search_recv: Some(search_recv),
             search_result: vec![],
+            log: vec![],
         }
     }
 
@@ -114,6 +119,12 @@ impl<'a> App<'a> {
                     match last {
                         SearchMessage::Terminate => break,
                         SearchMessage::SearchRequest(query) => {
+                            ui_send
+                                .send(Message::Log(format!(
+                                    "Search Start -- {query:?}"
+                                )))
+                                .unwrap();
+
                             if let Ok(search_results) =
                                 searcher.handle_query(&query)
                             {
@@ -121,6 +132,12 @@ impl<'a> App<'a> {
                                     .send(Message::SearchResults(
                                         search_results,
                                     ))
+                                    .unwrap();
+
+                                ui_send
+                                    .send(Message::Log(format!(
+                                        "Search End --   {query:?}"
+                                    )))
                                     .unwrap();
                             }
                         }
@@ -145,6 +162,9 @@ impl<'a> App<'a> {
                             self.search_result = results;
                         }
                         Message::Terminate => break,
+                        Message::Log(l) => {
+                            self.log.push((Local::now(), l));
+                        }
                     }
                 } else {
                     break;
@@ -224,10 +244,11 @@ impl<'a> App<'a> {
     }
 
     fn render(&self, frame: &mut Frame) {
-        let [header, input, search_results, status] = Layout::vertical([
+        let [header, input, search_results, logs, status] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(3),
             Constraint::Min(1),
+            Constraint::Length(5),
             Constraint::Length(1),
         ])
         .areas(frame.area());
@@ -240,6 +261,7 @@ impl<'a> App<'a> {
 
         self.render_input(frame, input);
         self.render_search_result(frame, search_results, &self.search_result);
+        self.render_log(frame, logs);
         self.render_status(frame, status);
     }
 
@@ -255,6 +277,21 @@ impl<'a> App<'a> {
         // end of the input text and one line down from the border to the input line
         let x = self.input.visual_cursor().max(scroll) - scroll + 1;
         frame.set_cursor_position((area.x + x as u16, area.y + 1))
+    }
+
+    fn render_log(&self, frame: &mut Frame, area: Rect) {
+        let last_5 = &self.log[self.log.len().saturating_sub(5)..];
+        frame.render_widget(
+            Paragraph::new(
+                last_5
+                    .iter()
+                    .map(|(n, l)| {
+                        Line::raw(format!("{} {l}", n.format("%H:%M:%S%.3f")))
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            area,
+        );
     }
 
     fn render_search_result(
