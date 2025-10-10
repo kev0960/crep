@@ -27,6 +27,7 @@ use std::sync::mpsc;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
 
+use crate::searcher::FirstAndLastFound;
 use crate::searcher::Query;
 use crate::searcher::Searcher;
 
@@ -54,14 +55,14 @@ pub struct App<'a> {
     search_send: mpsc::Sender<SearchMessage>,
     search_recv: Option<mpsc::Receiver<SearchMessage>>,
 
-    search_result: Vec<SearchResult>,
+    search_result: Vec<FirstAndLastFound>,
     log: Vec<(DateTime<Local>, String)>,
 }
 
 #[derive(Debug)]
 enum Message {
     Event(Event),
-    SearchResults(Vec<SearchResult>),
+    SearchResults(Vec<FirstAndLastFound>),
     Terminate,
     Log(String),
 }
@@ -298,23 +299,44 @@ impl<'a> App<'a> {
         &self,
         frame: &mut Frame,
         area: Rect,
-        results: &[SearchResult],
+        results: &[FirstAndLastFound],
     ) {
         let mut lines = vec![];
         for result in results {
             lines.push(Line::from(vec![Span::raw(format!(
                 "File: {}",
-                result.file_name
+                result.first.file_name
             ))]));
 
-            for (line_num, line) in &result.lines {
-                let words = result.words_per_line.get(line_num);
-                lines.push(get_highlighted_line(
-                    line,
-                    *line_num,
-                    words.unwrap_or(&Vec::new()),
-                ))
-            }
+            match &result.last {
+                Some(last) => {
+                    lines.push(Line::from(vec![Span::raw(format!(
+                        "First seen at commit {} ... last seen at {}",
+                        result.first.commit_id, last.commit_id
+                    ))]));
+
+                    lines.extend_from_slice(&convert_search_result_to_lines(
+                        &result.first,
+                    ));
+                    lines.extend_from_slice(&[
+                        Line::from(""),
+                        Line::from("---------------------------------------"),
+                        Line::from(""),
+                    ]);
+                    lines.extend_from_slice(&convert_search_result_to_lines(
+                        last,
+                    ));
+                }
+                None => {
+                    lines.push(Line::from(vec![Span::raw(format!(
+                        "Seen at commit {}",
+                        result.first.commit_id
+                    ))]));
+                    lines.extend_from_slice(&convert_search_result_to_lines(
+                        &result.first,
+                    ));
+                }
+            };
 
             lines.push(Line::raw(""));
         }
@@ -386,6 +408,20 @@ fn get_highlighted_line<'a>(
     }
 
     Line::from(result)
+}
+
+fn convert_search_result_to_lines(result: &SearchResult) -> Vec<Line> {
+    let mut lines = vec![];
+    for (line_num, line) in &result.lines {
+        let words = result.words_per_line.get(line_num);
+        lines.push(get_highlighted_line(
+            line,
+            *line_num,
+            words.unwrap_or(&Vec::new()),
+        ))
+    }
+
+    lines
 }
 
 fn truncate_long_line(line: &str) -> String {

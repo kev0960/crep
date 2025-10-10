@@ -5,12 +5,14 @@ use std::collections::HashSet;
 use aho_corasick::AhoCorasick;
 use regex::Regex;
 
+use crate::index::git_indexer::CommitIndex;
+
 use super::git_searcher::Query;
-use super::git_searcher::RawPerFileSearchResult;
 
 #[derive(Debug)]
 pub struct SearchResult {
     pub file_name: String,
+    pub commit_id: CommitIndex,
     pub words_per_line: BTreeMap<usize, Vec<(String, usize)>>,
     pub lines: BTreeMap<usize, String>,
 }
@@ -23,17 +25,12 @@ pub struct MatchingWordPos {
 
 impl SearchResult {
     pub fn new(
-        r: &RawPerFileSearchResult,
+        query: &Query,
+        commit_id: CommitIndex,
         file_name: &str,
         file_content: &[&str],
     ) -> anyhow::Result<Option<Self>> {
-        let first_commit_introduced = r.overlapped_commits.min();
-
-        if first_commit_introduced.is_none() {
-            return Ok(None);
-        }
-
-        let matches = match &r.query {
+        let matches = match query {
             Query::Words(words) => {
                 Self::find_word_matches_in_document(words, file_content)?
                     .iter()
@@ -46,7 +43,7 @@ impl SearchResult {
             }
         };
 
-        if let Query::Words(ref words) = r.query {
+        if let Query::Words(words) = query {
             if matches.len() != words.len() {
                 // Not every words are found in the document.
                 return Ok(None);
@@ -84,6 +81,7 @@ impl SearchResult {
 
         Ok(Some(SearchResult {
             file_name: file_name.to_owned(),
+            commit_id,
             words_per_line,
             lines,
         }))

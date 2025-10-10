@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crep_indexer::index::git_index::GitIndex;
 use crep_indexer::search::git_searcher::GitSearcher;
+use crep_indexer::search::git_searcher::RawPerFileSearchResult;
 use crep_indexer::search::git_searcher::SearchOption;
 use crep_indexer::search::search_result::SearchResult;
 use git2::Oid;
@@ -20,6 +21,12 @@ pub enum Query {
     RawString(String),
 }
 
+#[derive(Debug)]
+pub struct FirstAndLastFound {
+    pub first: SearchResult,
+    pub last: Option<SearchResult>,
+}
+
 impl<'a> Searcher<'a> {
     pub fn new(index: &'a GitIndex, path: &str) -> Self {
         Self {
@@ -32,20 +39,20 @@ impl<'a> Searcher<'a> {
     pub fn handle_query(
         &mut self,
         query: &Query,
-    ) -> anyhow::Result<Vec<SearchResult>> {
+    ) -> anyhow::Result<Vec<FirstAndLastFound>> {
         let mut search_results = vec![];
 
         let raw_results = match query {
             Query::Regex(regex) => self.searcher.regex_search(
                 regex,
                 Some(SearchOption {
-                    max_num_to_find: Some(10),
+                    max_num_to_find: None,
                 }),
             ),
             Query::RawString(key) => Ok(self.searcher.search(
                 key,
                 Some(SearchOption {
-                    max_num_to_find: Some(10),
+                    max_num_to_find: None,
                 }),
             )),
         };
@@ -62,30 +69,63 @@ impl<'a> Searcher<'a> {
                 self.index.file_id_to_path[result.file_id as usize]
             );
 
+            let mut first = None;
+            let mut last = None;
+
             for commit_id in &result.overlapped_commits {
                 debug!("Checking {commit_id}");
 
-                let (file_path, content) = self.read_file_at_commit(
-                    result.file_id as usize,
-                    commit_id as usize,
-                )?;
+                let search_result =
+                    self.get_search_result_at_commit(commit_id, &result)?;
 
-                let search_result = SearchResult::new(
-                    &result,
-                    file_path,
-                    &content.lines().collect::<Vec<&str>>(),
-                )?;
-
-                if let Some(search_result) = search_result {
-                    search_results.push(search_result);
-
-                    // Only add one case.
+                if search_result.is_some() {
+                    first = search_result;
                     break;
                 }
             }
+
+            if first.is_none() {
+                continue;
+            }
+
+            let first_commit_id = first.as_ref().unwrap().commit_id;
+            for commit_id in result.overlapped_commits.iter().rev() {
+                let search_result =
+                    self.get_search_result_at_commit(commit_id, &result)?;
+
+                if first_commit_id == commit_id as usize {
+                    break;
+                }
+
+                if search_result.is_some() {
+                    last = search_result;
+                    break;
+                }
+            }
+
+            search_results.push(FirstAndLastFound {
+                first: first.unwrap(),
+                last,
+            })
         }
 
         Ok(search_results)
+    }
+
+    fn get_search_result_at_commit(
+        &self,
+        commit_id: u32,
+        result: &RawPerFileSearchResult,
+    ) -> anyhow::Result<Option<SearchResult>> {
+        let (file_path, content) = self
+            .read_file_at_commit(result.file_id as usize, commit_id as usize)?;
+
+        SearchResult::new(
+            &result.query,
+            commit_id as usize,
+            file_path,
+            &content.lines().collect::<Vec<&str>>(),
+        )
     }
 
     fn read_file_at_commit(

@@ -1,4 +1,5 @@
 use color_eyre::owo_colors::OwoColorize;
+use crep_indexer::search::search_result::SearchResult;
 
 use crate::searcher::{Query, Searcher};
 
@@ -15,22 +16,57 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
 
         let mut lines: Vec<String> = vec![];
         for result in results {
-            lines.push(format!("File: {}", result.file_name));
+            lines.push(format!("File: {}", result.first.file_name));
 
-            for (line_num, line) in &result.lines {
-                let words = result.words_per_line.get(line_num);
-                lines.push(get_highlighted_line(
-                    line,
-                    *line_num,
-                    words.unwrap_or(&Vec::new()),
-                ))
-            }
+            match &result.last {
+                Some(last) => {
+                    lines.push(format!(
+                        "First seen at commit {} ... last seen at {}",
+                        result.first.commit_id, last.commit_id
+                    ));
+
+                    lines.extend_from_slice(&convert_search_result_to_lines(
+                        &result.first,
+                    ));
+                    lines.extend_from_slice(&[
+                        "".to_owned(),
+                        "---------------------------------------".to_owned(),
+                        "".to_owned(),
+                    ]);
+                    lines.extend_from_slice(&convert_search_result_to_lines(
+                        last,
+                    ));
+                }
+                None => {
+                    lines.push(format!(
+                        "Seen at commit {}",
+                        result.first.commit_id
+                    ));
+                    lines.extend_from_slice(&convert_search_result_to_lines(
+                        &result.first,
+                    ));
+                }
+            };
 
             lines.push("".to_owned());
         }
 
         println!("{}", lines.join("\n"));
     }
+}
+
+fn convert_search_result_to_lines(result: &SearchResult) -> Vec<String> {
+    let mut lines = vec![];
+    for (line_num, line) in &result.lines {
+        let words = result.words_per_line.get(line_num);
+        lines.push(get_highlighted_line(
+            line,
+            *line_num,
+            words.unwrap_or(&Vec::new()),
+        ))
+    }
+
+    lines
 }
 
 fn string_to_query(query: String) -> Query {
