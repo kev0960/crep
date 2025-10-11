@@ -121,14 +121,27 @@ fn split_by_trigram<'a>(
 ) {
     let mut indexes = [0, 0, 0] as [usize; 3];
 
-    for (count, (index, c)) in line.char_indices().enumerate() {
-        let start = indexes[(count + 1) % 3];
+    let mut first_and_second = Vec::with_capacity(2);
+    let mut total_count = 0;
+    for (index, c) in line.char_indices() {
+        let start = indexes[(total_count + 1) % 3];
         let word = &line[start..index + c.len_utf8()];
 
+        if total_count < 2 {
+            first_and_second.push(word);
+        } else {
+            total_words.insert(word);
+            word_pos.entry(word).or_default().insert(line_num);
+        }
+
+        indexes[total_count % 3] = index;
+        total_count += 1;
+    }
+
+    if total_count <= 2 && total_count > 0 {
+        let word = first_and_second.last().unwrap();
         total_words.insert(word);
         word_pos.entry(word).or_default().insert(line_num);
-
-        indexes[count % 3] = index;
     }
 }
 
@@ -274,23 +287,18 @@ mod tests {
         assert_eq!(
             result.total_words,
             HashSet::from_iter(vec![
-                "a", "ab", "abc", "1", "12", "123", "234", "5", "56", "567",
-                "678", "789"
+                "a", "ab", "abc", "123", "234", "567", "678", "789"
             ])
         );
 
         assert_eq!(
             result.word_pos,
             WordPosition::LineNumOnlyWithDedup(HashMap::from_iter(vec![
-                ("a", vec![2, 3, 4]),
-                ("ab", vec![3, 4]),
+                ("a", vec![2]),
+                ("ab", vec![3]),
                 ("abc", vec![4]),
-                ("1", vec![5]),
-                ("12", vec![5]),
                 ("123", vec![5]),
                 ("234", vec![5]),
-                ("5", vec![6]),
-                ("56", vec![6]),
                 ("567", vec![6]),
                 ("678", vec![6]),
                 ("789", vec![6])

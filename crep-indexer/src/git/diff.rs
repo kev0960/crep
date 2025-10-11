@@ -3,10 +3,10 @@ use crate::index::git_indexer::CommitIndex;
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct FileDiffTracker {
     // the index that each line ends.
-    commit_line_end: Vec<usize>,
+    pub commit_line_end: Vec<usize>,
 
     // (commit_index, line_start_in_commit)
-    commit_indexes: Vec<(CommitIndex, usize)>,
+    pub commit_indexes: Vec<(CommitIndex, usize)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

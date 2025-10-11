@@ -315,15 +315,18 @@ impl GitIndexer {
 
                 let mut file_delta = file_delta.borrow_mut();
                 if line.origin() == '+' {
+                    let line = std::str::from_utf8(line.content())
+                            .unwrap_or("<invalid utf8>");
                     file_delta.last_mut().unwrap().added_lines.push(
-                        std::str::from_utf8(line.content())
-                            .unwrap_or("<invalid utf8>")
+                       line.strip_suffix('\n')
+                            .unwrap_or(line)
                             .to_owned(),
                     );
                 } else if line.origin() == '-' {
+                    let line = std::str::from_utf8(line.content())
+                            .unwrap_or("<invalid utf8>");
                     file_delta.last_mut().unwrap().deleted_lines.push(
-                        std::str::from_utf8(line.content())
-                            .unwrap_or("<invalid utf8>")
+                        line.strip_suffix('\n').unwrap_or(line)
                             .to_owned(),
                     );
                 }
@@ -685,4 +688,408 @@ struct GitDelta {
 
     added_lines: Vec<String>,
     deleted_lines: Vec<String>,
+}
+
+#[cfg(test)]
+mod index_tree {
+    use priority_queue::PriorityQueue;
+
+    use crate::index::document::{CommitEndPriority, WordIndex};
+
+    use super::*;
+
+    fn run(
+        cwd: &Path,
+        args: &[&str],
+    ) -> (i32, /*stdout=*/ String, /*stderr=*/ String) {
+        let out = std::process::Command::new(args[0])
+            .args(&args[1..])
+            .current_dir(cwd)
+            .output()
+            .expect("spawn ok");
+
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    }
+
+    fn init_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        let _ = run(root, &["git", "init"]);
+        let _ = run(
+            root,
+            &["git", "config", "--local", "user.email", "jaebum@test.com"],
+        );
+        let _ = run(root, &["git", "config", "--local", "user.name", "Jaebum"]);
+        dir
+    }
+
+    #[test]
+    fn index_tree_test() {
+        let mut indexer = GitIndexer::new(GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: false,
+        });
+
+        let repo = init_repo();
+        let repo_path = repo.path();
+
+        std::fs::write(repo_path.join("file.txt"), "a\nbc\ndef\ndefa").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "init"]);
+
+        let repo = Repository::open(repo_path).unwrap();
+        indexer.index_history(repo).unwrap();
+
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 1);
+        assert_eq!(
+            indexer.file_name_to_id,
+            HashMap::from_iter([("file.txt".to_owned(), 0)])
+        );
+        assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
+
+        let not_end_pri = CommitEndPriority(None);
+        let commit_incl = RoaringBitmap::from_sorted_iter(0..1).unwrap();
+
+        assert_eq!(
+            indexer.file_id_to_document,
+            HashMap::from([(
+                0,
+                Document {
+                    words: HashMap::from([
+                        (
+                            "a".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 0
+                                    },
+                                    not_end_pri
+                                )]),
+                                commit_inclutivity: commit_incl.clone()
+                            }
+                        ),
+                        (
+                            "bc".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 1
+                                    },
+                                    not_end_pri
+                                )]),
+                                commit_inclutivity: commit_incl.clone()
+                            }
+                        ),
+                        (
+                            "def".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![
+                                    (
+                                        WordKey {
+                                            commit_id: 0,
+                                            line: 2
+                                        },
+                                        not_end_pri
+                                    ),
+                                    (
+                                        WordKey {
+                                            commit_id: 0,
+                                            line: 3
+                                        },
+                                        not_end_pri
+                                    )
+                                ]),
+                                commit_inclutivity: commit_incl.clone()
+                            }
+                        ),
+                        (
+                            "efa".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 3
+                                    },
+                                    not_end_pri
+                                )]),
+                                commit_inclutivity: commit_incl.clone()
+                            }
+                        ),
+                    ]),
+                    all_words: Some(
+                        fst::Set::from_iter(["a", "bc", "def", "efa"]).unwrap()
+                    ),
+                    doc_modified_commits: RoaringBitmap::from_iter([0])
+                }
+            )])
+        );
+
+        assert_eq!(
+            indexer.word_to_file_id_ever_contained,
+            HashMap::from([
+                ("a".to_owned(), RoaringBitmap::from_iter([0])),
+                ("bc".to_owned(), RoaringBitmap::from_iter([0])),
+                ("def".to_owned(), RoaringBitmap::from_iter([0])),
+                ("efa".to_owned(), RoaringBitmap::from_iter([0])),
+            ])
+        );
+
+        assert_eq!(
+            indexer.file_id_to_diff_tracker,
+            HashMap::from([(
+                0,
+                FileDiffTracker {
+                    commit_line_end: vec![4],
+                    commit_indexes: vec![(0, 0)]
+                }
+            )])
+        );
+    }
+
+    #[test]
+    fn add_new_file_test() {
+        let mut indexer = GitIndexer::new(GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: false,
+        });
+
+        let repo = init_repo();
+        let repo_path = repo.path();
+
+        std::fs::write(repo_path.join("file.txt"), "abcd").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "init"]);
+
+        std::fs::write(repo_path.join("file2.txt"), "123").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "second"]);
+
+        let repo = Repository::open(repo_path).unwrap();
+        indexer.index_history(repo).unwrap();
+
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 2);
+        assert_eq!(
+            indexer.file_name_to_id,
+            HashMap::from_iter([
+                ("file.txt".to_owned(), 0),
+                ("file2.txt".to_owned(), 1)
+            ])
+        );
+        assert_eq!(
+            indexer.file_id_to_path,
+            vec!["file.txt".to_owned(), "file2.txt".to_owned()]
+        );
+
+        let not_end_pri = CommitEndPriority(None);
+        let first_commit_incl = RoaringBitmap::from_sorted_iter(0..2).unwrap();
+        let second_commit_incl = RoaringBitmap::from_sorted_iter(1..2).unwrap();
+
+        assert_eq!(
+            indexer.file_id_to_document,
+            HashMap::from([
+                (
+                    0,
+                    Document {
+                        words: HashMap::from([
+                            (
+                                "abc".to_owned(),
+                                WordIndex {
+                                    word_history: PriorityQueue::from_iter(
+                                        vec![(
+                                            WordKey {
+                                                commit_id: 0,
+                                                line: 0
+                                            },
+                                            not_end_pri
+                                        ),]
+                                    ),
+                                    commit_inclutivity: first_commit_incl
+                                        .clone()
+                                }
+                            ),
+                            (
+                                "bcd".to_owned(),
+                                WordIndex {
+                                    word_history: PriorityQueue::from_iter(
+                                        vec![(
+                                            WordKey {
+                                                commit_id: 0,
+                                                line: 0
+                                            },
+                                            not_end_pri
+                                        )]
+                                    ),
+                                    commit_inclutivity: first_commit_incl
+                                        .clone()
+                                }
+                            ),
+                        ]),
+                        all_words: Some(
+                            fst::Set::from_iter(["abc", "bcd"]).unwrap()
+                        ),
+                        doc_modified_commits: RoaringBitmap::from_iter([0])
+                    }
+                ),
+                (
+                    1,
+                    Document {
+                        words: HashMap::from([(
+                            "123".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 1,
+                                        line: 0
+                                    },
+                                    not_end_pri
+                                ),]),
+                                commit_inclutivity: second_commit_incl.clone()
+                            }
+                        ),]),
+                        all_words: Some(fst::Set::from_iter(["123"]).unwrap()),
+                        doc_modified_commits: RoaringBitmap::from_iter([1])
+                    }
+                )
+            ])
+        );
+    }
+
+    #[test]
+    fn edit_file_test() {
+        let mut indexer = GitIndexer::new(GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: false,
+        });
+
+        let repo = init_repo();
+        let repo_path = repo.path();
+
+        std::fs::write(repo_path.join("file.txt"), "1\n2\n3\n").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "init"]);
+
+        std::fs::write(repo_path.join("file.txt"), "1\nabcd\n3\n1").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "second"]);
+
+        let repo = Repository::open(repo_path).unwrap();
+        indexer.index_history(repo).unwrap();
+
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 2);
+        assert_eq!(
+            indexer.file_name_to_id,
+            HashMap::from_iter([("file.txt".to_owned(), 0),])
+        );
+        assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
+
+        let not_end_pri = CommitEndPriority(None);
+        let end_at_first_commit = CommitEndPriority(Some(0));
+
+        let first_and_second_incl =
+            RoaringBitmap::from_sorted_iter(0..2).unwrap();
+        let first_commit_incl = RoaringBitmap::from_sorted_iter(0..1).unwrap();
+        let second_commit_incl = RoaringBitmap::from_sorted_iter(1..2).unwrap();
+
+        assert_eq!(
+            indexer.file_id_to_document,
+            HashMap::from([(
+                0,
+                Document {
+                    words: HashMap::from([
+                        (
+                            "1".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![
+                                    (
+                                        WordKey {
+                                            commit_id: 0,
+                                            line: 0
+                                        },
+                                        not_end_pri
+                                    ),
+                                    (
+                                        WordKey {
+                                            commit_id: 1,
+                                            line: 3
+                                        },
+                                        not_end_pri
+                                    ),
+                                ]),
+                                commit_inclutivity: first_and_second_incl
+                                    .clone()
+                            }
+                        ),
+                        (
+                            "2".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 1
+                                    },
+                                    end_at_first_commit
+                                ),]),
+                                commit_inclutivity: first_commit_incl.clone()
+                            }
+                        ),
+                        (
+                            "3".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 2
+                                    },
+                                    not_end_pri
+                                ),]),
+                                commit_inclutivity: first_and_second_incl
+                                    .clone()
+                            }
+                        ),
+                        (
+                            "abc".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 1,
+                                        line: 1
+                                    },
+                                    not_end_pri
+                                ),]),
+                                commit_inclutivity: second_commit_incl.clone()
+                            }
+                        ),
+                        (
+                            "bcd".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 1,
+                                        line: 1
+                                    },
+                                    not_end_pri
+                                ),]),
+                                commit_inclutivity: second_commit_incl.clone()
+                            }
+                        ),
+                    ]),
+                    all_words: Some(
+                        fst::Set::from_iter(["1", "2", "3", "abc", "bcd"])
+                            .unwrap()
+                    ),
+                    doc_modified_commits: RoaringBitmap::from_iter([0, 1])
+                }
+            ),])
+        );
+    }
 }

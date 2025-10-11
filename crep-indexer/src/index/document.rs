@@ -18,8 +18,8 @@ pub struct WordKey {
     pub line: usize,
 }
 
-#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct CommitEndPriority(Option<usize>);
+#[derive(Debug, Eq, PartialEq, Serialize, Deserialize, Clone, Copy)]
+pub struct CommitEndPriority(pub Option<usize>);
 
 impl Ord for CommitEndPriority {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -211,30 +211,32 @@ impl Document {
 }
 
 #[cfg(test)]
+impl PartialEq for Document {
+    fn eq(&self, other: &Self) -> bool {
+        if self.words != other.words {
+            return false;
+        }
+
+        if self.doc_modified_commits != other.doc_modified_commits {
+            return false;
+        }
+
+        match (&self.all_words, &other.all_words) {
+            (Some(left), Some(right)) => {
+                left.stream().into_strs().unwrap()
+                    == right.stream().into_strs().unwrap()
+            }
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
 mod document_test {
     use super::*;
 
     use bincode::serde;
-
-    impl PartialEq for Document {
-        fn eq(&self, other: &Self) -> bool {
-            if self.words != other.words {
-                return false;
-            }
-
-            let self_words = match &self.all_words {
-                Some(w) => w.stream().into_strs().unwrap(),
-                None => vec![],
-            };
-
-            let other_words = match &self.all_words {
-                Some(w) => w.stream().into_strs().unwrap(),
-                None => vec![],
-            };
-
-            self_words == other_words
-        }
-    }
 
     #[test]
     fn add_words() {
