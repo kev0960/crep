@@ -1,0 +1,22 @@
+[package]
+name = "trigram-hash"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ahash = "0.8.12"
+
+[dev-dependencies]
+criterion = { version = "0.7.0", features = ["html_reports"] }
+tempfile = "3.23.0"
+
+[lib]
+name = "trigram_hash"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "trigram_bench"
+harness = false

@@ -37,31 +37,6 @@ impl Tokenizer {
     }
 }
 
-fn split_by_word<'a>(
-    line: &'a str,
-    total_words: &mut HashSet<&'a str>,
-    word_pos: &mut HashMap<&'a str, BTreeSet<usize>>,
-    line_num: usize,
-) {
-    let mut start = 0;
-    for (i, c) in line.char_indices() {
-        if c.is_ascii_punctuation() || c.is_ascii_whitespace() {
-            if i > start {
-                let word = &line[start..i];
-                total_words.insert(word);
-                word_pos.entry(word).or_default().insert(line_num);
-            }
-            start = i + c.len_utf8()
-        }
-    }
-
-    if start < line.len() {
-        let word = &line[start..];
-        total_words.insert(word);
-        word_pos.entry(word).or_default().insert(line_num);
-    }
-}
-
 fn split_by_trigram<'a>(
     line: &'a str,
     total_words: &mut HashSet<&'a str>,

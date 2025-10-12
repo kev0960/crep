@@ -38,12 +38,19 @@ struct Args {
 
     #[arg(long)]
     log: Option<String>,
+
+    #[arg(long)]
+    save_only: bool,
 }
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
     let index = build_index(&args);
+    if args.save_only {
+        return Ok(());
+    }
+
     let mut searcher = Searcher::new(&index, &args.path);
 
     if args.debug {

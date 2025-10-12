@@ -19,3 +19,6 @@ tui-input = "0.14.0"
 [profile.release]
 debug = "line-tables-only"
 strip = "none"
+
+[lints]
+workspace = true
