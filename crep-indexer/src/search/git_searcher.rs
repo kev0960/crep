@@ -15,7 +15,6 @@ use crate::index::git_index::GitIndex;
 use crate::index::git_indexer::FileId;
 use crate::search::permutation::PermutationIterator;
 use crate::tokenizer::Tokenizer;
-use crate::tokenizer::TokenizerMethod;
 use crate::util::bitmap::utils::intersect_bitmap_vec;
 use crate::util::bitmap::utils::intersect_bitmaps;
 use crate::util::bitmap::utils::union_bitmaps;
@@ -269,11 +268,7 @@ impl<'i> GitSearcher<'i> {
         }
 
         let lines = vec![w.clone()];
-        let trigrams = Tokenizer::split_lines_to_tokens(
-            &lines,
-            0,
-            TokenizerMethod::Trigram,
-        );
+        let trigrams = Tokenizer::split_lines_to_tokens(&lines, 0);
 
         let tokens = trigrams.total_words;
         let trigrams: HashSet<&str> =
@@ -399,11 +394,7 @@ impl<'i> GitSearcher<'i> {
         }
 
         let lines = vec![word.to_owned()];
-        let trigrams = Tokenizer::split_lines_to_tokens(
-            &lines,
-            0,
-            TokenizerMethod::Trigram,
-        );
+        let trigrams = Tokenizer::split_lines_to_tokens(&lines, 0);
 
         let mut commit_bitmaps = vec![];
         for w in trigrams.total_words {
