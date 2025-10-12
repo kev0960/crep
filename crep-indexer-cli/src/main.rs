@@ -9,11 +9,9 @@ use std::path::Path;
 use app::App;
 use clap::Parser;
 use crep_indexer::index::git_index::GitIndex;
-use crep_indexer::index::indexer::IndexResult;
-use crep_indexer::index::indexer::Indexer;
-use crep_indexer::index::indexer::IndexerConfig;
+use crep_indexer::index::git_indexer::{GitIndexer, GitIndexerConfig};
 
-use log::{LevelFilter, debug};
+use log::LevelFilter;
 use logger::init_file_logger;
 use raw_searcher::handle_query;
 use searcher::Searcher;
@@ -48,7 +46,6 @@ fn main() -> io::Result<()> {
     let index = build_index(&args);
     let mut searcher = Searcher::new(&index, &args.path);
 
-    println!("Debug {}", args.debug);
     if args.debug {
         env_logger::init();
 
@@ -74,24 +71,25 @@ fn build_index(args: &Args) -> GitIndex {
     match &args.load_path {
         Some(load_path) => GitIndex::load(Path::new(&load_path)).unwrap(),
         _ => {
-            let indexer = Indexer::new(&IndexerConfig {
-                root_dir: &args.path,
-                main_branch_name: args.main_branch.as_deref(),
+            let mut indexer = GitIndexer::new(GitIndexerConfig {
+                show_index_progress: true,
+                main_branch_name: args
+                    .main_branch
+                    .as_deref()
+                    .unwrap_or("main")
+                    .to_owned(),
                 ignore_utf8_error: true,
             });
 
-            let index = indexer.index().unwrap();
+            let repo = git2::Repository::open(Path::new(&args.path)).unwrap();
+            indexer.index_history(repo).unwrap();
 
-            match index {
-                IndexResult::GitIndex(index) => {
-                    if let Some(save_path) = &args.save_path {
-                        index.save(std::path::Path::new(&save_path)).unwrap();
-                    }
-
-                    index
-                }
-                _ => panic!("Only Git index is supported"),
+            let index = GitIndex::build(indexer);
+            if let Some(save_path) = &args.save_path {
+                index.save(std::path::Path::new(&save_path)).unwrap();
             }
+
+            index
         }
     }
 }

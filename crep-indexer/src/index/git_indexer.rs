@@ -961,6 +961,26 @@ mod index_tree {
                 )
             ])
         );
+
+        pretty_assertions::assert_eq!(
+            indexer.file_id_to_diff_tracker,
+            HashMap::from([
+                (
+                    0,
+                    FileDiffTracker {
+                        commit_line_end: vec![1],
+                        commit_indexes: vec![(0, 0)]
+                    }
+                ),
+                (
+                    1,
+                    FileDiffTracker {
+                        commit_line_end: vec![1],
+                        commit_indexes: vec![(1, 0)]
+                    }
+                )
+            ])
+        )
     }
 
     #[test]
@@ -1091,5 +1111,114 @@ mod index_tree {
                 }
             ),])
         );
+
+        pretty_assertions::assert_eq!(
+            indexer.file_id_to_diff_tracker,
+            HashMap::from([(
+                0,
+                FileDiffTracker {
+                    commit_line_end: vec![1, 2, 3, 4],
+                    commit_indexes: vec![(0, 0), (1, 1), (0, 2), (1, 3)]
+                }
+            ),])
+        )
+    }
+
+    #[test]
+    fn delete_file_test() {
+        let mut indexer = GitIndexer::new(GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: false,
+        });
+
+        let repo = init_repo();
+        let repo_path = repo.path();
+
+        std::fs::write(repo_path.join("file.txt"), "1\n2\n3\n").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "init"]);
+
+        std::fs::remove_file(repo_path.join("file.txt")).unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "second"]);
+
+        let repo = Repository::open(repo_path).unwrap();
+        indexer.index_history(repo).unwrap();
+
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 2);
+        assert_eq!(
+            indexer.file_name_to_id,
+            HashMap::from_iter([("file.txt".to_owned(), 0),])
+        );
+        assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
+
+        let end_at_first_commit = CommitEndPriority(Some(0));
+        let first_commit_incl = RoaringBitmap::from_sorted_iter(0..1).unwrap();
+
+        pretty_assertions::assert_eq!(
+            indexer.file_id_to_document,
+            HashMap::from([(
+                0,
+                Document {
+                    words: HashMap::from([
+                        (
+                            "1".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 0
+                                    },
+                                    end_at_first_commit
+                                ),]),
+                                commit_inclutivity: first_commit_incl.clone()
+                            }
+                        ),
+                        (
+                            "2".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 1
+                                    },
+                                    end_at_first_commit
+                                ),]),
+                                commit_inclutivity: first_commit_incl.clone()
+                            }
+                        ),
+                        (
+                            "3".to_owned(),
+                            WordIndex {
+                                word_history: PriorityQueue::from_iter(vec![(
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 2
+                                    },
+                                    end_at_first_commit
+                                ),]),
+                                commit_inclutivity: first_commit_incl.clone()
+                            }
+                        ),
+                    ]),
+                    all_words: Some(
+                        fst::Set::from_iter(["1", "2", "3"]).unwrap()
+                    ),
+                    doc_modified_commits: RoaringBitmap::from_iter([0, 1])
+                }
+            ),])
+        );
+
+        pretty_assertions::assert_eq!(
+            indexer.file_id_to_diff_tracker,
+            HashMap::from([(
+                0,
+                FileDiffTracker {
+                    commit_line_end: vec![],
+                    commit_indexes: vec![]
+                }
+            ),])
+        )
     }
 }
