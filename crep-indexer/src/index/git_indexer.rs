@@ -1,9 +1,10 @@
 use crate::git::diff::FileDiffTracker;
 use crate::git::diff::LineDeleteResult;
-use crate::tokenizer::Tokenizer;
-use crate::tokenizer::WordPosition;
+use ahash::AHashMap;
+use ahash::AHashSet;
 use anyhow::Result;
 use git2::Delta;
+use git2::DiffDelta;
 use git2::DiffFlags;
 use git2::ObjectType;
 use git2::Repository;
@@ -15,9 +16,9 @@ use indicatif::ProgressStyle;
 use log::debug;
 use roaring::RoaringBitmap;
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::Path;
+use trigram_hash::trigram_hash::TrigramKey;
+use trigram_hash::trigram_hash::split_lines_to_tokens;
 
 use super::check_binary::Utf8FileChecker;
 use super::document::Document;
@@ -30,20 +31,20 @@ pub struct GitIndexer {
     config: GitIndexerConfig,
 
     pub commit_index_to_commit_id: Vec<[u8; 20]>,
-    pub commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
+    pub commit_id_to_commit_index: AHashMap<[u8; 20], CommitIndex>,
 
-    file_name_to_id: HashMap<String, FileId>,
+    file_name_to_id: AHashMap<String, FileId>,
     pub file_id_to_path: Vec<String>,
-    file_id_to_diff_tracker: HashMap<FileId, FileDiffTracker>,
+    file_id_to_diff_tracker: AHashMap<FileId, FileDiffTracker>,
 
-    pub file_id_to_document: HashMap<FileId, Document>,
+    pub file_id_to_document: AHashMap<FileId, Document>,
 
     // RoaringBitmap is set if the corresponding file id contains the word.
-    pub word_to_file_id_ever_contained: HashMap<String, RoaringBitmap>,
+    pub word_to_file_id_ever_contained: AHashMap<TrigramKey, RoaringBitmap>,
 
     utf8_file_checker: Utf8FileChecker,
 
-    ignored_non_utf8_file_path_set: HashSet<String>,
+    ignored_non_utf8_file_path_set: AHashSet<String>,
 }
 
 #[derive(Debug)]
@@ -65,13 +66,13 @@ impl GitIndexer {
             config,
             utf8_file_checker: Utf8FileChecker::new().unwrap(),
             commit_index_to_commit_id: Vec::new(),
-            commit_id_to_commit_index: HashMap::new(),
-            file_name_to_id: HashMap::new(),
+            commit_id_to_commit_index: AHashMap::new(),
+            file_name_to_id: AHashMap::new(),
             file_id_to_path: Vec::new(),
-            file_id_to_diff_tracker: HashMap::new(),
-            file_id_to_document: HashMap::new(),
-            word_to_file_id_ever_contained: HashMap::new(),
-            ignored_non_utf8_file_path_set: HashSet::new(),
+            file_id_to_diff_tracker: AHashMap::new(),
+            file_id_to_document: AHashMap::new(),
+            word_to_file_id_ever_contained: AHashMap::new(),
+            ignored_non_utf8_file_path_set: AHashSet::new(),
         }
     }
 
@@ -207,6 +208,12 @@ impl GitIndexer {
             &mut |delta, _| {
                 // Ignore binary files.
                 if delta.flags().contains(DiffFlags::BINARY) {
+                    // If the binary diffs are detected, 
+                    for path in get_file_names_from_diff_delta(&delta) {
+                        debug!("Ignored: {}", path);
+                        self.ignored_non_utf8_file_path_set.insert(path);
+                    }
+
                     return true;
                 }
 
@@ -553,21 +560,17 @@ impl GitIndexer {
         }
 
         // Now index those new lines.
-        let tokens =
-            Tokenizer::split_lines_to_tokens(lines, new_line_start).word_pos;
-        let word_to_lines = match tokens {
-            WordPosition::LineNumOnlyWithDedup(word_to_lines) => word_to_lines,
-        };
+        let tokens = split_lines_to_tokens(lines, new_line_start);
 
         let document = self.file_id_to_document.entry(file_id).or_default();
-        for word in word_to_lines.keys() {
+        for word in tokens.keys() {
             self.word_to_file_id_ever_contained
-                .entry(word.to_string())
+                .entry(*word)
                 .or_default()
                 .insert(file_id as u32);
         }
 
-        document.add_words(commit_index, word_to_lines);
+        document.add_words(commit_index, tokens);
     }
 
     fn delete_lines(
@@ -592,24 +595,20 @@ impl GitIndexer {
 
         let document = document.unwrap();
 
-        let tokens =
-            Tokenizer::split_lines_to_tokens(lines, /*new_line_start=*/ 0)
-                .word_pos;
+        let tokens = split_lines_to_tokens(lines, /*new_line_start=*/ 0);
 
-        let word_to_lines = match tokens {
-            WordPosition::LineNumOnlyWithDedup(word_to_lines) => word_to_lines,
-        }
-        .into_iter()
-        .map(|(word, lines)| {
-            (
-                word,
-                lines
-                    .into_iter()
-                    .map(|line| word_key_for_each_deleted_line[line])
-                    .collect::<Vec<WordKey>>(),
-            )
-        })
-        .collect::<Vec<(&str, Vec<WordKey>)>>();
+        let word_to_lines = tokens
+            .into_iter()
+            .map(|(word, lines)| {
+                (
+                    word,
+                    lines
+                        .into_iter()
+                        .map(|line| word_key_for_each_deleted_line[line])
+                        .collect::<Vec<WordKey>>(),
+                )
+            })
+            .collect::<Vec<(TrigramKey, Vec<WordKey>)>>();
 
         document.remove_words(commit_index, &word_to_lines);
     }
@@ -668,6 +667,19 @@ fn count_number_of_commits(
     Ok(revwalk.count())
 }
 
+fn get_file_names_from_diff_delta(d: &DiffDelta) -> Vec<String> {
+    let mut v = vec![];
+    if let Some(path) = d.old_file().path() {
+        v.push(path.to_str().unwrap().to_owned());
+    }
+
+    if let Some(path) = d.new_file().path() {
+        v.push(path.to_str().unwrap().to_owned());
+    }
+
+    v
+}
+
 #[derive(Debug)]
 struct GitDelta {
     prev_line_start_num: u32,
@@ -684,7 +696,8 @@ struct GitDelta {
 mod index_tree {
     use priority_queue::PriorityQueue;
 
-    use crate::index::document::{CommitEndPriority, WordIndex};
+    use crate::index::document::CommitEndPriority;
+    use crate::index::document::WordIndex;
 
     use super::*;
 
@@ -739,7 +752,7 @@ mod index_tree {
         assert_eq!(indexer.commit_index_to_commit_id.len(), 1);
         assert_eq!(
             indexer.file_name_to_id,
-            HashMap::from_iter([("file.txt".to_owned(), 0)])
+            AHashMap::from_iter([("file.txt".to_owned(), 0)])
         );
         assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
 
@@ -748,12 +761,12 @@ mod index_tree {
 
         assert_eq!(
             indexer.file_id_to_document,
-            HashMap::from([(
+            AHashMap::from([(
                 0,
                 Document {
-                    words: HashMap::from([
+                    words: AHashMap::from([
                         (
-                            "a".to_owned(),
+                            "a".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -766,7 +779,7 @@ mod index_tree {
                             }
                         ),
                         (
-                            "bc".to_owned(),
+                            "bc".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -779,7 +792,7 @@ mod index_tree {
                             }
                         ),
                         (
-                            "def".to_owned(),
+                            "def".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![
                                     (
@@ -801,7 +814,7 @@ mod index_tree {
                             }
                         ),
                         (
-                            "efa".to_owned(),
+                            "efa".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -824,17 +837,17 @@ mod index_tree {
 
         assert_eq!(
             indexer.word_to_file_id_ever_contained,
-            HashMap::from([
-                ("a".to_owned(), RoaringBitmap::from_iter([0])),
-                ("bc".to_owned(), RoaringBitmap::from_iter([0])),
-                ("def".to_owned(), RoaringBitmap::from_iter([0])),
-                ("efa".to_owned(), RoaringBitmap::from_iter([0])),
+            AHashMap::from([
+                ("a".into(), RoaringBitmap::from_iter([0])),
+                ("bc".into(), RoaringBitmap::from_iter([0])),
+                ("def".into(), RoaringBitmap::from_iter([0])),
+                ("efa".into(), RoaringBitmap::from_iter([0])),
             ])
         );
 
         assert_eq!(
             indexer.file_id_to_diff_tracker,
-            HashMap::from([(
+            AHashMap::from([(
                 0,
                 FileDiffTracker {
                     commit_line_end: vec![4],
@@ -869,7 +882,7 @@ mod index_tree {
         assert_eq!(indexer.commit_index_to_commit_id.len(), 2);
         assert_eq!(
             indexer.file_name_to_id,
-            HashMap::from_iter([
+            AHashMap::from_iter([
                 ("file.txt".to_owned(), 0),
                 ("file2.txt".to_owned(), 1)
             ])
@@ -885,13 +898,13 @@ mod index_tree {
 
         assert_eq!(
             indexer.file_id_to_document,
-            HashMap::from([
+            AHashMap::from([
                 (
                     0,
                     Document {
-                        words: HashMap::from([
+                        words: AHashMap::from([
                             (
-                                "abc".to_owned(),
+                                "abc".into(),
                                 WordIndex {
                                     word_history: PriorityQueue::from_iter(
                                         vec![(
@@ -907,7 +920,7 @@ mod index_tree {
                                 }
                             ),
                             (
-                                "bcd".to_owned(),
+                                "bcd".into(),
                                 WordIndex {
                                     word_history: PriorityQueue::from_iter(
                                         vec![(
@@ -932,8 +945,8 @@ mod index_tree {
                 (
                     1,
                     Document {
-                        words: HashMap::from([(
-                            "123".to_owned(),
+                        words: AHashMap::from([(
+                            "123".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -954,7 +967,7 @@ mod index_tree {
 
         pretty_assertions::assert_eq!(
             indexer.file_id_to_diff_tracker,
-            HashMap::from([
+            AHashMap::from([
                 (
                     0,
                     FileDiffTracker {
@@ -998,7 +1011,7 @@ mod index_tree {
         assert_eq!(indexer.commit_index_to_commit_id.len(), 2);
         assert_eq!(
             indexer.file_name_to_id,
-            HashMap::from_iter([("file.txt".to_owned(), 0),])
+            AHashMap::from_iter([("file.txt".to_owned(), 0),])
         );
         assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
 
@@ -1012,12 +1025,12 @@ mod index_tree {
 
         assert_eq!(
             indexer.file_id_to_document,
-            HashMap::from([(
+            AHashMap::from([(
                 0,
                 Document {
-                    words: HashMap::from([
+                    words: AHashMap::from([
                         (
-                            "1".to_owned(),
+                            "1".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![
                                     (
@@ -1040,7 +1053,7 @@ mod index_tree {
                             }
                         ),
                         (
-                            "2".to_owned(),
+                            "2".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -1053,7 +1066,7 @@ mod index_tree {
                             }
                         ),
                         (
-                            "3".to_owned(),
+                            "3".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -1067,7 +1080,7 @@ mod index_tree {
                             }
                         ),
                         (
-                            "abc".to_owned(),
+                            "abc".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -1080,7 +1093,7 @@ mod index_tree {
                             }
                         ),
                         (
-                            "bcd".to_owned(),
+                            "bcd".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -1104,7 +1117,7 @@ mod index_tree {
 
         pretty_assertions::assert_eq!(
             indexer.file_id_to_diff_tracker,
-            HashMap::from([(
+            AHashMap::from([(
                 0,
                 FileDiffTracker {
                     commit_line_end: vec![1, 2, 3, 4],
@@ -1139,7 +1152,7 @@ mod index_tree {
         assert_eq!(indexer.commit_index_to_commit_id.len(), 2);
         assert_eq!(
             indexer.file_name_to_id,
-            HashMap::from_iter([("file.txt".to_owned(), 0),])
+            AHashMap::from_iter([("file.txt".to_owned(), 0),])
         );
         assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
 
@@ -1148,12 +1161,12 @@ mod index_tree {
 
         pretty_assertions::assert_eq!(
             indexer.file_id_to_document,
-            HashMap::from([(
+            AHashMap::from([(
                 0,
                 Document {
-                    words: HashMap::from([
+                    words: AHashMap::from([
                         (
-                            "1".to_owned(),
+                            "1".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -1166,7 +1179,7 @@ mod index_tree {
                             }
                         ),
                         (
-                            "2".to_owned(),
+                            "2".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -1179,7 +1192,7 @@ mod index_tree {
                             }
                         ),
                         (
-                            "3".to_owned(),
+                            "3".into(),
                             WordIndex {
                                 word_history: PriorityQueue::from_iter(vec![(
                                     WordKey {
@@ -1202,7 +1215,7 @@ mod index_tree {
 
         pretty_assertions::assert_eq!(
             indexer.file_id_to_diff_tracker,
-            HashMap::from([(
+            AHashMap::from([(
                 0,
                 FileDiffTracker {
                     commit_line_end: vec![],

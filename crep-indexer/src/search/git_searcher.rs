@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use anyhow::anyhow;
 use fst::IntoStreamer;
 use fst::Set;
@@ -9,12 +7,13 @@ use regex_automata::dense;
 use regex_syntax::hir::Hir;
 use regex_syntax::hir::HirKind;
 use roaring::RoaringBitmap;
+use trigram_hash::trigram_hash::TrigramKey;
+use trigram_hash::trigram_hash::split_lines_to_token_set;
 
 use crate::index::document::Document;
 use crate::index::git_index::GitIndex;
 use crate::index::git_indexer::FileId;
 use crate::search::permutation::PermutationIterator;
-use crate::tokenizer::Tokenizer;
 use crate::util::bitmap::utils::intersect_bitmap_vec;
 use crate::util::bitmap::utils::intersect_bitmaps;
 use crate::util::bitmap::utils::union_bitmaps;
@@ -255,7 +254,9 @@ impl<'i> GitSearcher<'i> {
                 find_all_words_containing_key(word, &self.index.all_words)
                     .into_iter()
                     .filter_map(|word| {
-                        self.index.word_to_file_id_ever_contained.get(&word)
+                        self.index
+                            .word_to_file_id_ever_contained
+                            .get(&word.into())
                     })
                     .collect::<Vec<_>>();
 
@@ -268,16 +269,12 @@ impl<'i> GitSearcher<'i> {
         }
 
         let lines = vec![w.clone()];
-        let trigrams = Tokenizer::split_lines_to_tokens(&lines, 0);
-
-        let tokens = trigrams.total_words;
-        let trigrams: HashSet<&str> =
-            tokens.into_iter().filter(|w| w.len() >= 3).collect();
+        let trigrams = split_lines_to_token_set(&lines);
 
         // Find the document that contains all matching tokens.
         let bitmaps = trigrams
             .iter()
-            .filter_map(|t| self.index.word_to_file_id_ever_contained.get(*t))
+            .filter_map(|t| self.index.word_to_file_id_ever_contained.get(t))
             .collect::<Vec<_>>();
 
         if bitmaps.len() != trigrams.len() {
@@ -385,7 +382,9 @@ impl<'i> GitSearcher<'i> {
                 &words_to_find
                     .into_iter()
                     .filter_map(|w| {
-                        doc.words.get(&w).map(|index| &index.commit_inclutivity)
+                        doc.words
+                            .get(&w.into())
+                            .map(|index| &index.commit_inclutivity)
                     })
                     .collect::<Vec<_>>(),
             );
@@ -394,15 +393,11 @@ impl<'i> GitSearcher<'i> {
         }
 
         let lines = vec![word.to_owned()];
-        let trigrams = Tokenizer::split_lines_to_tokens(&lines, 0);
+        let trigrams = split_lines_to_token_set(&lines);
 
         let mut commit_bitmaps = vec![];
-        for w in trigrams.total_words {
-            if w.len() < 3 {
-                continue;
-            }
-
-            if let Some(b) = doc.words.get(w) {
+        for w in trigrams {
+            if let Some(b) = doc.words.get(&w) {
                 commit_bitmaps.push(&b.commit_inclutivity);
             } else {
                 return vec![];
@@ -486,15 +481,19 @@ fn find_all_words_containing_key(
 fn find_matching_trigram(
     key: &Trigram,
     all_words: &Set<Vec<u8>>,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<TrigramKey>> {
     let matching_regex_or_string = key.create_matching_regex_or_string();
     match matching_regex_or_string {
-        RegexOrString::String(s) => Ok(vec![s]),
+        RegexOrString::String(s) => Ok(vec![s.into()]),
         RegexOrString::Regex(r) => {
             let dfa = dense::Builder::new().build(&r)?;
-            let strs = all_words.search(dfa).into_stream().into_strs()?;
-
-            Ok(strs)
+            Ok(all_words
+                .search(dfa)
+                .into_stream()
+                .into_strs()?
+                .into_iter()
+                .map(|f| TrigramKey::from_utf8(&f))
+                .collect())
         }
     }
 }

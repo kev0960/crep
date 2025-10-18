@@ -1,7 +1,9 @@
-use std::{fs::File, sync::Mutex};
+use std::fs::File;
+use std::sync::Mutex;
 
 use chrono::Local;
-use log::{LevelFilter, SetLoggerError};
+use log::LevelFilter;
+use log::SetLoggerError;
 use std::io::Write;
 
 struct FileLogger {

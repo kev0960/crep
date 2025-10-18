@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ahash = { workspace = true, features = ["serde"] }
 aho-corasick = "1.1.3"
 anyhow = "1.0.98"
 arrayvec = "0.7.6"
@@ -11,6 +12,7 @@ bincode = { version = "2.0.1", features = ["serde"] }
 fst = { version = "0.4", features = ["levenshtein"] }
 ftree = "1.2.0"
 git2 = { workspace = true }
+hex = "0.4.3"
 indicatif = "0.18.0"
 itertools = "0.14.0"
 lru = "0.16.0"
@@ -22,7 +24,8 @@ regex = "1.11.1"
 regex-automata = { version = "0.1.9", features = ["transducer"] }
 regex-syntax = "0.8.6"
 roaring = { version = "0.11.0", features = ["serde"] }
-serde = { version = "1.0.219", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+trigram-hash = { path = "../trigram-hash" }
 walkdir = "2.5.0"
 
 [dev-dependencies]

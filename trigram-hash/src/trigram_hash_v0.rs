@@ -1,5 +1,8 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
+#[cfg(feature = "bench")]
 pub fn split_lines_to_tokens_v0(
     lines: &[String],
     line_start_index: usize,

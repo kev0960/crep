@@ -9,7 +9,8 @@ use std::path::Path;
 use app::App;
 use clap::Parser;
 use crep_indexer::index::git_index::GitIndex;
-use crep_indexer::index::git_indexer::{GitIndexer, GitIndexerConfig};
+use crep_indexer::index::git_indexer::GitIndexer;
+use crep_indexer::index::git_indexer::GitIndexerConfig;
 
 use log::LevelFilter;
 use logger::init_file_logger;

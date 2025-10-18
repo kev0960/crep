@@ -1,14 +1,15 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::path::Path;
 
+use ahash::AHashMap;
 use bincode::serde as bserde;
 use fst::Set;
 use roaring::RoaringBitmap;
 use serde::Deserialize;
 use serde::Serialize;
+use trigram_hash::trigram_hash::TrigramKey;
 
 use super::document::Document;
 use super::git_indexer::CommitIndex;
@@ -18,12 +19,12 @@ use super::git_indexer::GitIndexer;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitIndex {
     pub commit_index_to_commit_id: Vec<[u8; 20]>,
-    pub commit_id_to_commit_index: HashMap<[u8; 20], CommitIndex>,
+    pub commit_id_to_commit_index: AHashMap<[u8; 20], CommitIndex>,
 
     pub file_id_to_path: Vec<String>,
 
-    pub file_id_to_document: HashMap<FileId, Document>,
-    pub word_to_file_id_ever_contained: HashMap<String, RoaringBitmap>,
+    pub file_id_to_document: AHashMap<FileId, Document>,
+    pub word_to_file_id_ever_contained: AHashMap<TrigramKey, RoaringBitmap>,
 
     #[serde(with = "crate::util::serde::fst::fst_set_to_vec")]
     pub all_words: Set<Vec<u8>>,
@@ -83,10 +84,8 @@ impl GitIndex {
 mod tests {
     use bincode::serde;
 
-    use crate::{
-        index::document::WordKey,
-        util::fst::test_util::test::convert_fst_to_string_vec,
-    };
+    use crate::index::document::WordKey;
+    use crate::util::fst::test_util::test::convert_fst_to_string_vec;
 
     use super::*;
 
@@ -95,13 +94,17 @@ mod tests {
         let mut document_a = Document::new();
         document_a.add_words(
             1,
-            HashMap::from_iter(vec![("a", vec![1, 2, 3]), ("b", vec![3, 4])]),
+            AHashMap::from_iter(vec![
+                ("a".into(), vec![1, 2, 3]),
+                ("b".into(), vec![3, 4]),
+            ]),
         );
-        document_a.add_words(2, HashMap::from_iter(vec![("b", vec![5])]));
+        document_a
+            .add_words(2, AHashMap::from_iter(vec![("b".into(), vec![5])]));
         document_a.remove_words(
             3,
             &[(
-                "a",
+                "a".into(),
                 vec![
                     WordKey {
                         commit_id: 1,
@@ -117,10 +120,10 @@ mod tests {
 
         let index = GitIndex {
             commit_index_to_commit_id: vec![[0; 20], [1; 20]],
-            commit_id_to_commit_index: HashMap::new(),
+            commit_id_to_commit_index: AHashMap::new(),
             file_id_to_path: vec!["/a".to_owned(), "/b".to_owned()],
-            file_id_to_document: HashMap::from_iter(vec![(1, document_a)]),
-            word_to_file_id_ever_contained: HashMap::new(),
+            file_id_to_document: AHashMap::from_iter(vec![(1, document_a)]),
+            word_to_file_id_ever_contained: AHashMap::new(),
             all_words: Set::from_iter(["a", "ab", "abc"].iter()).unwrap(),
         };
 

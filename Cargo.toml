@@ -3,8 +3,10 @@ members = ["crep-indexer", "crep-indexer-cli", "crep-server", "trigram-hash"]
 resolver = "3"
 
 [workspace.dependencies]
+ahash = "0.8.12"
 git2 = "0.20.2"
 log = "0.4.28"
+serde = "1.0.228"
 
 [workspace.lints]
 rust = {}

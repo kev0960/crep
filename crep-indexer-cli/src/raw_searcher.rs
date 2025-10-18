@@ -1,7 +1,8 @@
 use color_eyre::owo_colors::OwoColorize;
 use crep_indexer::search::search_result::SearchResult;
 
-use crate::searcher::{Query, Searcher};
+use crate::searcher::Query;
+use crate::searcher::Searcher;
 
 pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
     loop {

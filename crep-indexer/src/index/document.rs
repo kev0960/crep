@@ -1,10 +1,11 @@
+use ahash::AHashMap;
+use ahash::AHashSet;
 use fst::Set;
 use priority_queue::PriorityQueue;
 use serde::Deserialize;
 use serde::Serialize;
 use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use trigram_hash::trigram_hash::TrigramKey;
 
 use roaring::RoaringBitmap;
 
@@ -49,7 +50,7 @@ pub struct WordIndex {
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct Document {
-    pub words: HashMap<String, WordIndex>,
+    pub words: AHashMap<TrigramKey, WordIndex>,
 
     #[serde(with = "crate::util::serde::fst::fst_set_to_vec::option")]
     pub all_words: Option<Set<Vec<u8>>>,
@@ -60,7 +61,7 @@ pub struct Document {
 impl Document {
     pub fn new() -> Self {
         Self {
-            words: HashMap::new(),
+            words: AHashMap::new(),
             all_words: None,
             doc_modified_commits: RoaringBitmap::new(),
         }
@@ -69,10 +70,10 @@ impl Document {
     pub fn add_words(
         &mut self,
         commit_index: CommitIndex,
-        words: HashMap<&str, Vec<usize>>,
+        words: AHashMap<TrigramKey, Vec<usize>>,
     ) {
         for (word, lines) in words {
-            let word_index = self.words.entry(word.to_owned()).or_default();
+            let word_index = self.words.entry(word).or_default();
 
             for line in lines {
                 word_index.word_history.push(
@@ -92,10 +93,10 @@ impl Document {
     pub fn remove_words(
         &mut self,
         commit_index: CommitIndex,
-        words: &[(&str, Vec<WordKey>)],
+        words: &[(TrigramKey, Vec<WordKey>)],
     ) {
         for (word, word_keys) in words {
-            let word_index = self.words.get_mut(*word);
+            let word_index = self.words.get_mut(word);
             if let Some(word_index) = word_index {
                 for word_key in word_keys {
                     word_index.word_history.change_priority(
@@ -107,7 +108,7 @@ impl Document {
             }
         }
 
-        let modified_words: HashSet<&str> =
+        let modified_words: AHashSet<TrigramKey> =
             words.iter().map(|(word, _)| *word).collect();
         for word in modified_words {
             self.update_commit_inclutivity(commit_index, word);
@@ -128,17 +129,17 @@ impl Document {
                     _ => None,
                 };
 
-                if let Some((key, priority)) = end {
-                    if priority == &CommitEndPriority(None) {
-                        word_index.word_history.change_priority(
-                            &key,
-                            // TODO: Get prev commit properly.
-                            CommitEndPriority(Some(commit_index - 1)),
-                        );
+                if let Some((key, priority)) = end
+                    && priority == &CommitEndPriority(None)
+                {
+                    word_index.word_history.change_priority(
+                        &key,
+                        // TODO: Get prev commit properly.
+                        CommitEndPriority(Some(commit_index - 1)),
+                    );
 
-                        is_commit_end_modified = true;
-                        continue;
-                    }
+                    is_commit_end_modified = true;
+                    continue;
                 }
 
                 break;
@@ -158,25 +159,30 @@ impl Document {
     fn update_commit_inclutivity(
         &mut self,
         commit_index: CommitIndex,
-        word: &str,
+        word: TrigramKey,
     ) {
-        if let Some(word_index) = self.words.get_mut(word) {
-            if let Some((_, last_commit)) = word_index.word_history.peek() {
-                let last_enabled_commit = word_index.commit_inclutivity.max();
-                let end_commit_index = match last_commit {
-                    CommitEndPriority(None) => commit_index,
-                    CommitEndPriority(Some(commit_id)) => *commit_id,
-                };
+        let word_index = self.words.get_mut(&word);
+        if word_index.is_none() {
+            return;
+        }
 
-                if let Some(last_enabled_bit) = last_enabled_commit {
-                    word_index.commit_inclutivity.insert_range(
-                        last_enabled_bit..((end_commit_index + 1) as u32),
-                    );
-                } else {
-                    word_index
-                        .commit_inclutivity
-                        .insert(end_commit_index as u32);
-                }
+        let word_index = word_index.unwrap();
+        if let Some((_, last_commit)) = word_index.word_history.peek() {
+            let last_enabled_commit = word_index.commit_inclutivity.max();
+            let end_commit_index = match last_commit {
+                CommitEndPriority(None) => commit_index,
+                CommitEndPriority(Some(commit_id)) => *commit_id,
+            };
+
+            if let Some(last_enabled_bit) = last_enabled_commit {
+                word_index.commit_inclutivity.insert_range(
+                    last_enabled_bit..((end_commit_index + 1) as u32),
+                );
+                word_index.commit_inclutivity.optimize();
+            } else {
+                word_index
+                    .commit_inclutivity
+                    .insert(end_commit_index as u32);
             }
         }
     }
@@ -240,7 +246,10 @@ mod document_test {
 
     #[test]
     fn add_words() {
-        let words = HashMap::from([("hi", vec![1, 2]), ("hello", vec![1, 3])]);
+        let words = AHashMap::from([
+            ("hi".into(), vec![1, 2]),
+            ("hello".into(), vec![1, 3]),
+        ]);
 
         let mut document = Document::new();
 
@@ -248,9 +257,9 @@ mod document_test {
         assert_eq!(
             document,
             Document {
-                words: HashMap::from([
+                words: AHashMap::from([
                     (
-                        "hi".to_owned(),
+                        "hi".into(),
                         WordIndex {
                             word_history: PriorityQueue::from(vec![
                                 (
@@ -272,7 +281,7 @@ mod document_test {
                         }
                     ),
                     (
-                        "hello".to_owned(),
+                        "hello".into(),
                         WordIndex {
                             word_history: PriorityQueue::from(vec![
                                 (
@@ -304,9 +313,9 @@ mod document_test {
     fn serde_document_test() {
         let document =
             Document {
-                words: HashMap::from([
+                words: AHashMap::from([
                     (
-                        "bye".to_owned(),
+                        "bye".into(),
                         WordIndex {
                             word_history: PriorityQueue::from_iter(vec![
                                 (
@@ -329,7 +338,7 @@ mod document_test {
                         },
                     ),
                     (
-                        "hel".to_owned(),
+                        "hel".into(),
                         WordIndex {
                             word_history: PriorityQueue::from_iter(vec![(
                                 WordKey {
