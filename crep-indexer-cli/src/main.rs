@@ -47,10 +47,10 @@ struct Args {
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
-    if args.debug {
-        env_logger::init();
-    } else if let Some(log) = &args.log {
+    if let Some(log) = &args.log {
         init_file_logger(log, LevelFilter::Debug).unwrap();
+    } else if args.debug {
+        env_logger::init();
     }
 
     let index = build_index(&args);

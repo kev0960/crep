@@ -3,7 +3,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Debug)]
 pub struct IndexDebugStats {
     git_diff_tree_to_tree: Duration,
     file_diff_times: Vec<Duration>,
@@ -55,11 +54,10 @@ impl fmt::Display for IndexDebugStats {
 
         write!(
             f,
-            "{} [File Avg: {}, total files: {}] Diff Tree only: {}",
+            "{} [File Avg: {}, total files: {}]",
             self.git_delta_index_overall_duration.as_millis(),
             file_diff_avg,
             self.file_diff_times.len(),
-            self.git_diff_tree_to_tree.as_millis(),
         )
     }
 }

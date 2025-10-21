@@ -8,6 +8,7 @@ use git2::Delta;
 use git2::DiffDelta;
 use git2::DiffFlags;
 use git2::ObjectType;
+use git2::Oid;
 use git2::Repository;
 use git2::Sort;
 use git2::Tree;
@@ -15,6 +16,7 @@ use git2::TreeWalkResult;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use log::debug;
+use log::trace;
 use roaring::RoaringBitmap;
 use std::cell::RefCell;
 use std::path::Path;
@@ -220,7 +222,7 @@ impl GitIndexer {
                 if delta.flags().contains(DiffFlags::BINARY) {
                     // If the binary diffs are detected, 
                     for path in get_file_names_from_diff_delta(&delta) {
-                        debug!("Ignored: {}", path);
+                        trace!("Ignored: {}", path);
                         self.ignored_non_utf8_file_path_set.insert(path);
                     }
 
@@ -363,13 +365,16 @@ impl GitIndexer {
 
         let git_delta_index_done = Instant::now();
         debug!(
-            "Diff stat: {:?}",
+            "Diff stat: {} {}",
             IndexDebugStats::new(
                 diff_start,
                 diff_call_end,
                 for_each_start_times,
                 git_delta_index_done
-            )
+            ),
+            hex::encode(Oid::from_bytes(
+                &self.commit_index_to_commit_id[*commit_index]
+            )?)
         );
 
         Ok(())
