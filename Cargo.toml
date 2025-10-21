@@ -10,3 +10,7 @@ serde = "1.0.228"
 
 [workspace.lints]
 rust = {}
+
+[profile.release]
+debug = "line-tables-only"
+strip = "none"
