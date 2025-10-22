@@ -100,6 +100,7 @@ impl GitIndexer {
         let mut revwalk = repo.revwalk()?;
 
         revwalk.push_head()?;
+        revwalk.simplify_first_parent()?;
         revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::REVERSE)?;
 
         let mut last_tree: Option<Tree> = None;
@@ -1179,5 +1180,148 @@ mod index_tree {
                 }
             ),])
         )
+    }
+
+    #[test]
+    fn index_merged_branch_test() {
+        let mut indexer = GitIndexer::new(GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: false,
+        });
+
+        let repo = init_repo();
+        let repo_path = repo.path();
+
+        std::fs::write(repo_path.join("file1.txt"), "a").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "init"]);
+
+        run(repo_path, &["git", "checkout", "-b", "branch"]);
+        std::fs::write(repo_path.join("file1.txt"), "b").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "branch-commit1"]);
+
+        std::fs::write(repo_path.join("file1.txt"), "c").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "branch-commit2"]);
+
+        run(repo_path, &["git", "checkout", "main"]);
+        std::fs::write(repo_path.join("file2.txt"), "x").unwrap();
+
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "main-commit2"]);
+
+        // Now merge branch into main.
+        run(repo_path, &["git", "merge", "branch"]);
+        let result = run(
+            repo_path,
+            &["git", "log", "--oneline", "--graph", "--decorate", "--all"],
+        );
+        print!("{}", result.1);
+
+        let repo = Repository::open(repo_path).unwrap();
+        indexer.index_history(repo).unwrap();
+
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 3);
+        assert_eq!(
+            indexer.file_name_to_id,
+            AHashMap::from_iter([
+                ("file1.txt".to_owned(), 0),
+                ("file2.txt".to_owned(), 1)
+            ])
+        );
+        assert_eq!(
+            indexer.file_id_to_path,
+            vec!["file1.txt".to_owned(), "file2.txt".to_owned()]
+        );
+
+        pretty_assertions::assert_eq!(
+            indexer.file_id_to_document,
+            AHashMap::from([
+                (
+                    0,
+                    Document {
+                        words: AHashMap::from([
+                            (
+                                "a".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([]),
+                                    commit_inclutivity:
+                                        RoaringBitmap::from_sorted_iter(0..1)
+                                            .unwrap()
+                                }
+                            ),
+                            (
+                                "c".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 2,
+                                            line: 0
+                                        },
+                                    ]),
+                                    commit_inclutivity:
+                                        RoaringBitmap::from_sorted_iter(2..3)
+                                            .unwrap()
+                                }
+                            ),
+                        ]),
+                        all_words: Some(
+                            fst::Set::from_iter(["a", "c"]).unwrap()
+                        ),
+                        doc_modified_commits: RoaringBitmap::from_iter([0, 2])
+                    }
+                ),
+                (
+                    1,
+                    Document {
+                        words: AHashMap::from([(
+                            "x".into(),
+                            WordIndex {
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 1,
+                                    line: 0
+                                }]),
+                                commit_inclutivity:
+                                    RoaringBitmap::from_sorted_iter(1..3)
+                                        .unwrap()
+                            }
+                        )]),
+                        all_words: Some(fst::Set::from_iter(["x"]).unwrap()),
+                        doc_modified_commits: RoaringBitmap::from_iter([1])
+                    }
+                )
+            ])
+        );
+
+        assert_eq!(
+            indexer.word_to_file_id_ever_contained,
+            AHashMap::from([
+                ("a".into(), RoaringBitmap::from_iter([0])),
+                ("c".into(), RoaringBitmap::from_iter([0])),
+                ("x".into(), RoaringBitmap::from_iter([1])),
+            ])
+        );
+
+        assert_eq!(
+            indexer.file_id_to_diff_tracker,
+            AHashMap::from([
+                (
+                    0,
+                    FileDiffTracker {
+                        commit_line_end: vec![1],
+                        commit_indexes: vec![(2, 0)]
+                    }
+                ),
+                (
+                    1,
+                    FileDiffTracker {
+                        commit_line_end: vec![1],
+                        commit_indexes: vec![(1, 0)]
+                    }
+                )
+            ])
+        );
     }
 }
