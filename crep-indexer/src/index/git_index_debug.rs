@@ -4,7 +4,6 @@ use std::{
 };
 
 pub struct IndexDebugStats {
-    git_diff_tree_to_tree: Duration,
     file_diff_times: Vec<Duration>,
     git_delta_index_overall_duration: Duration,
 }
@@ -12,16 +11,13 @@ pub struct IndexDebugStats {
 impl IndexDebugStats {
     pub fn new(
         diff_start: Instant,
-        diff_call_end: Instant,
         for_each_start_times: Vec<Instant>,
         git_delta_index_done: Instant,
     ) -> Self {
-        let git_diff_tree_to_tree = diff_call_end.duration_since(diff_start);
-
         let mut file_diff_times = vec![];
         for (i, t) in for_each_start_times.iter().enumerate() {
             if i == 0 {
-                file_diff_times.push(t.duration_since(diff_call_end));
+                file_diff_times.push(t.duration_since(diff_start));
             } else {
                 file_diff_times
                     .push(t.duration_since(for_each_start_times[i - 1]))
@@ -29,14 +25,13 @@ impl IndexDebugStats {
         }
 
         file_diff_times.push(git_delta_index_done.duration_since(
-            *for_each_start_times.last().unwrap_or(&diff_call_end),
+            *for_each_start_times.last().unwrap_or(&diff_start),
         ));
 
         let git_delta_index_overall_duration =
             git_delta_index_done.duration_since(diff_start);
 
         Self {
-            git_diff_tree_to_tree,
             file_diff_times,
             git_delta_index_overall_duration,
         }

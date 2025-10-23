@@ -206,8 +206,6 @@ impl GitIndexer {
             Some(&mut opts),
         )?;
 
-        let diff_call_end = Instant::now();
-
         let current_diff_file: RefCell<Option<CurrentGitDiffFile>> =
             RefCell::new(None);
 
@@ -369,7 +367,6 @@ impl GitIndexer {
             "Diff stat: {} {}",
             IndexDebugStats::new(
                 diff_start,
-                diff_call_end,
                 for_each_start_times,
                 git_delta_index_done
             ),
@@ -388,55 +385,57 @@ impl GitIndexer {
         repo: &Repository,
     ) -> Result<()> {
         tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
-            if entry.kind() == Some(ObjectType::Blob) {
-                if let Some(name) = entry.name() {
-                    let object_id = entry.id();
-                    let blob = match repo.find_blob(object_id) {
-                        Ok(blob) => blob,
-                        Err(_) => return TreeWalkResult::Ok,
-                    };
+            if entry.kind() != Some(ObjectType::Blob) {
+                return TreeWalkResult::Ok;
+            }
 
-                    let file_ext = Path::new(name)
-                        .extension()
-                        .unwrap_or_default()
-                        .to_str()
-                        .unwrap();
+            if let Some(name) = entry.name() {
+                let object_id = entry.id();
+                let blob = match repo.find_blob(object_id) {
+                    Ok(blob) => blob,
+                    Err(_) => return TreeWalkResult::Ok,
+                };
 
-                    if !self
-                        .utf8_file_checker
-                        .is_utf8_document(blob.content(), file_ext)
-                    {
-                        return TreeWalkResult::Ok;
-                    }
+                let file_ext = Path::new(name)
+                    .extension()
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap();
 
-                    let content = std::str::from_utf8(blob.content());
-
-                    if content.is_err() {
-                        if self.config.ignore_utf8_error {
-                            self.ignored_non_utf8_file_path_set
-                                .insert(format!("{root}{name}"));
-
-                            return TreeWalkResult::Ok;
-                        } else {
-                            panic!("Non UTF-8 file found at {root}{name}");
-                        }
-                    }
-
-                    let content = content.unwrap();
-                    let file_name = &format!("{root}{name}");
-
-                    let file_id = self.get_file_id_insert_if_missing(file_name);
-                    self.add_new_lines(
-                        *commit_index,
-                        file_id,
-                        /*prev_line_start=*/ 0,
-                        /*new_line_start=*/ 0,
-                        &content
-                            .lines()
-                            .map(|line| line.to_string())
-                            .collect::<Vec<String>>(),
-                    );
+                if !self
+                    .utf8_file_checker
+                    .is_utf8_document(blob.content(), file_ext)
+                {
+                    return TreeWalkResult::Ok;
                 }
+
+                let content = std::str::from_utf8(blob.content());
+
+                if content.is_err() {
+                    if self.config.ignore_utf8_error {
+                        self.ignored_non_utf8_file_path_set
+                            .insert(format!("{root}{name}"));
+
+                        return TreeWalkResult::Ok;
+                    } else {
+                        panic!("Non UTF-8 file found at {root}{name}");
+                    }
+                }
+
+                let content = content.unwrap();
+                let file_name = &format!("{root}{name}");
+
+                let file_id = self.get_file_id_insert_if_missing(file_name);
+                self.add_new_lines(
+                    *commit_index,
+                    file_id,
+                    /*prev_line_start=*/ 0,
+                    /*new_line_start=*/ 0,
+                    &content
+                        .lines()
+                        .map(|line| line.to_string())
+                        .collect::<Vec<String>>(),
+                );
             }
 
             TreeWalkResult::Ok
@@ -1118,14 +1117,18 @@ mod index_tree {
         run(repo_path, &["git", "add", "."]);
         run(repo_path, &["git", "commit", "-m", "init"]);
 
-        std::fs::remove_file(repo_path.join("file.txt")).unwrap();
+        std::fs::write(repo_path.join("file.txt"), "1\n3\n").unwrap();
         run(repo_path, &["git", "add", "."]);
         run(repo_path, &["git", "commit", "-m", "second"]);
+
+        std::fs::remove_file(repo_path.join("file.txt")).unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "third"]);
 
         let repo = Repository::open(repo_path).unwrap();
         indexer.index_history(repo).unwrap();
 
-        assert_eq!(indexer.commit_index_to_commit_id.len(), 2);
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 3);
         assert_eq!(
             indexer.file_name_to_id,
             AHashMap::from_iter([("file.txt".to_owned(), 0),])
@@ -1133,6 +1136,7 @@ mod index_tree {
         assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
 
         let first_commit_incl = RoaringBitmap::from_sorted_iter(0..1).unwrap();
+        let first_and_second = RoaringBitmap::from_sorted_iter(0..2).unwrap();
 
         pretty_assertions::assert_eq!(
             indexer.file_id_to_document,
@@ -1144,7 +1148,7 @@ mod index_tree {
                             "1".into(),
                             WordIndex {
                                 word_history: AHashSet::new(),
-                                commit_inclutivity: first_commit_incl.clone()
+                                commit_inclutivity: first_and_second.clone()
                             }
                         ),
                         (
@@ -1158,14 +1162,14 @@ mod index_tree {
                             "3".into(),
                             WordIndex {
                                 word_history: AHashSet::new(),
-                                commit_inclutivity: first_commit_incl.clone()
+                                commit_inclutivity: first_and_second.clone()
                             }
                         ),
                     ]),
                     all_words: Some(
                         fst::Set::from_iter(["1", "2", "3"]).unwrap()
                     ),
-                    doc_modified_commits: RoaringBitmap::from_iter([0, 1])
+                    doc_modified_commits: RoaringBitmap::from_iter([0, 1, 2])
                 }
             ),])
         );

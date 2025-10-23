@@ -94,7 +94,7 @@ impl Document {
             if !word_index.word_history.is_empty() {
                 let last_enabled_commit = word_index.commit_inclutivity.max();
                 word_index.commit_inclutivity.insert_range(
-                    last_enabled_commit.unwrap()..((commit_index - 1) as u32),
+                    last_enabled_commit.unwrap()..(commit_index as u32),
                 );
 
                 word_index.word_history.clear();
