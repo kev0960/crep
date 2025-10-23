@@ -1,14 +1,15 @@
-# Workspace Overview
+# Workspace Guide
 
-This workspace provides a Git history–aware code search engine built as a Rust workspace.
+This workspace hosts a Git history search engine implemented as a Rust workspace with shared indexing/search logic and multiple front ends.
 
-## Crates
-- `crep-indexer`: library crate that builds/loads search indices and evaluates queries. See `crep-indexer/AGENTS.md` for details.
-- `crep-indexer-cli`: CLI wrapper that runs indexing jobs, persists indices, and offers an interactive search REPL. See `crep-indexer-cli/AGENTS.md`.
-- `crep-server`: Axum/Leptos application scaffold intended to host a web UI over the shared library. See `crep-server/AGENTS.md`.
+## Crates at a Glance
+- `crep-indexer`: builds history-aware indices, persists them, and exposes search and result-viewer primitives. Updated architecture notes live in `crep-indexer/AGENTS.md`.
+- `crep-indexer-cli`: terminal UI and raw REPL over the library. Handles index build/load, persistence, and interactive search. See `crep-indexer-cli/AGENTS.md`.
+- `crep-server`: Axum + Leptos scaffold for a future web front end. Current wiring and extension advice is in `crep-server/AGENTS.md`.
 
-## Typical Usage
-1. Use `crep-indexer-cli` to build or load a `GitIndex` for a repository.
-2. Run queries through the CLI (or integrate the same library logic into the server to provide an API/UI).
+## Typical Flow
+1. Use `crep-indexer-cli` with `--path <repo>` to build a `GitIndex`, optionally `--save-path` to persist it, or `--load-path` to reuse an existing index.
+2. Search from the ratatui UI (default) or `--debug` raw prompt to validate queries.
+3. Integrate the same indexing/search crates into other applications (e.g., `crep-server`) by loading the saved `GitIndex` and constructing a `GitSearcher` per request.
 
-Consult each crate’s `AGENTS.md` for module internals and extension guidelines.
+Refer to the per-crate guides before extending modules or adding new entry points.

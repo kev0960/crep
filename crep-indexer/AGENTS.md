@@ -1,58 +1,50 @@
 # crep-indexer – Architecture Guide
 
-`crep-indexer` is the shared library that knows how to index a Git repository’s full history and answer code-search queries. The crate is organised into a few key modules.
+`crep-indexer` houses the shared logic for turning a Git repository into a history-aware search index and executing queries against it.
 
-## Index Entry Points (`index/indexer.rs`)
-- `Indexer` chooses between Git-aware indexing (`GitIndexer`) and a filesystem-only fallback (`Index`).
-- `IndexerConfig` captures root path, default main branch, and UTF-8 handling policy.
-- `index_directory` scans non-Git trees via `WalkDir`, tokenises text files, and produces an `Index` (files, word bitmaps, word positions) mainly for local experiments.
+## Module Map
+- `lib.rs`: re-exports the `git`, `index`, and `search` modules for consumers.
+- `git/`: diff utilities, primarily `FileDiffTracker`, that map libgit2 deltas to per-line add/delete bookkeeping.
+- `index/`:
+  - `git_indexer.rs`: orchestrates repo traversal, diff processing, tokenisation, and per-file state updates.
+  - `document.rs`: owns the per-file model (`Document`, `WordIndex`, `WordKey`) with roaring bitmaps tracking commit inclusions and history.
+  - `git_index.rs`: materialises a persistent `GitIndex` from the finished `GitIndexer`; handles `save`/`load`.
+  - `git_index_debug.rs`: opt-in instrumentation summarising diff timings while indexing.
+  - `check_binary.rs`: UTF-8 gatekeeping and binary detection helpers.
+- `search/`:
+  - `git_searcher.rs`: entry point that satisfies literal and regex searches using trigram/FST lookups, bitmap intersections, and LRU caching for word-to-document maps.
+  - `regex_search.rs`: lowers regex HIR to `RegexSearchCandidates` and `Trigram` sets the searcher can probe without full-text scanning.
+  - `permutation.rs`: iterator that enumerates candidate combinations of commit histories per matched token.
+  - `search_result.rs`: converts `Query` + file content into highlighted contexts for first/last commit discovery.
+  - `result_viewer.rs` & `line_formatter.rs`: reopen the repo to render highlighted snippets for CLI/UI consumers.
+- `util/`: bitmap helpers (`intersect_bitmaps`, `union_bitmaps`), FST serde glue, and other shared utilities required across modules.
 
-## Git-Aware Index Build (`index/git_indexer.rs`)
-- `GitIndexer::index_history` walks commits topologically using libgit2, collecting `commit_index_to_commit_id` and a reverse map.
-- Per commit it either:
-  - runs `index_tree` for the first snapshot; or
-  - diffs against the previous tree (`index_diff`), translating each hunk (`GitDelta`) into add/delete operations.
-- `Utf8FileChecker` (`index/check_binary.rs`) filters obvious binary blobs and honours the `ignore_utf8_error` flag.
-- `FileDiffTracker` (`git/diff.rs`) maps live line ranges to the commit that last touched them, enabling precise removal bookkeeping.
-- `add_new_lines` tokenises added lines (trigrams) and updates document state; it also records file-level membership in `word_to_file_id_ever_contained`.
-- `delete_lines`/`delete_entire_file` consult `FileDiffTracker`, flatten removals into `WordKey`s, and mark tokens as inactive from the relevant commit onward.
+## Index Build Flow (`GitIndexer`)
+1. `GitIndexer::new` configures progress output, branch selection, and UTF-8 policy via `GitIndexerConfig`.
+2. `index_history` walks commits in topological order using libgit2, maintaining commit id/index maps and calling `index_tree` for the first snapshot or `index_diff` thereafter.
+3. Each diff run leverages `FileDiffTracker` to translate adds/deletes into trigram updates. Text content is tokenised with `split_lines_to_tokens` before being merged into `Document`s.
+4. When a document mutates, its `WordIndex` entries update `word_history` and `commit_inclutivity`. Deletions extend prior lifetimes so historical presence is preserved.
+5. After traversal, `Document::finalize` seals each file by extending trailing intervals and building an FST of observed tokens.
 
-## Per-File State (`index/document.rs`)
-- `Document` keeps every observed token for a file.
-  - `word_history`: `PriorityQueue<WordKey, CommitEndPriority>` recording when each token instance started and when it stopped existing.
-  - `commit_inclutivity`: `RoaringBitmap` flagging commits where the token is present.
-  - `all_words`: FST (`fst::Set`) built at `finalize` time for fast trigram lookups.
-- `add_words`, `remove_words`, and `remove_document` update the queue and bitmaps in response to diff events.
-- `finalize` extends trailing token lifetimes to the tip commit and materialises the per-file FST.
+## Persisted Index (`GitIndex`)
+`GitIndex::build` consumes the finished indexer, exposing:
+- commit lookup tables (`commit_index_to_commit_id`, inverse map),
+- `file_id_to_path` and `file_id_to_document` maps,
+- `word_to_file_id_ever_contained` for trigram-to-file membership, and
+- a workspace-wide `all_words` FST for approximate lookups.
+Indices can be serialised with `save`/`load` (bincode) using helpers from `util::serde`.
 
-## Persisted Index (`index/git_index.rs`)
-- `GitIndex::build` consumes a finished `GitIndexer`, packaging:
-  - commit lookup tables,
-  - `file_id_to_path`,
-  - `file_id_to_document`,
-  - global `word_to_file_id_ever_contained`, and
-  - a workspace-wide `all_words` FST.
-- `save`/`load` serialise via `bincode` using helpers under `util/serde/fst`.
+## Search Stack
+- Literal queries: `GitSearcher::search` splits on whitespace, resolves each term to file bitmaps (with caching for short tokens), intersects per-file histories, and emits `RawPerFileSearchResult` entries containing overlapping commit ranges.
+- Regex queries: `GitSearcher::regex_search` converts the regex HIR to trigram candidates (`RegexSearchCandidates`), prunes impossible paths, then intersects doc-level bitmaps for any candidate set of trigrams.
+- Commit range reconciliation: `PermutationIterator` iterates candidate word histories, and `find_matching_commit_histories_in_doc*` intersect commit bitmaps (including `doc_modified_commits`) to identify uninterrupted spans where every token coexisted.
 
-## Search Components (`search/*`)
-- `GitSearcher` (`search/git_searcher.rs`) performs both literal and regex queries over a `GitIndex`.
-  - Token-level bitmap lookups and intersections determine candidate files.
-  - `PermutationIterator` explores combinations when multiple occurrences may satisfy the query.
-  - `find_matching_commit_histories_in_doc`/`_from_trigrams` collapse per-token `RoaringBitmap`s into commit ranges where all parts coexisted.
-  - Results are emitted as `RawPerFileSearchResult` (file id + commit bitmap + query description).
-- Regex handling (`search/regex_search.rs`) lowers a regex HIR into minimal trigram requirements (`RegexSearchCandidates`, `Trigram`) so the searcher can probe FSTs instead of full-text scanning.
-- `GitSearchResultViewer` (`search/result_viewer.rs`) re-opens the Git repo, materialises file content from the earliest matching commit, and highlights hits using Aho-Corasick plus stored byte offsets.
-
-## Tokenisation (`tokenizer.rs`)
-- `Tokenizer::split_lines_to_tokens` emits deduplicated line numbers for words or trigrams, designed for indexing commits.
-- `Tokenizer::split_to_words_with_col` retains byte offsets for presentation.
-- `TokenizerMethod` selects between word mode and trigram mode; lines and positions are stored in hash maps/BTreeSets for deterministic output.
-
-## Shared Utilities
-- `util/bitmap::utils` exposes `union_bitmaps`/`intersect_bitmaps` helpers for `RoaringBitmap` operations.
-- `util/serde` and `util/fst` provide serialization glue for FST-backed sets.
+## Result Rendering
+Consumers can use:
+- `GitSearchResultViewer`: loads blobs for first matching commits, highlights matched ranges via `line_formatter::highlight_line_by_positions`, and prints truncated contexts.
+- `SearchResult`: lightweight struct used by the CLI to obtain first/last sightings per file alongside per-line highlights.
 
 ## Extending the Crate
-- To add new per-token metadata, extend `WordIndex` in `document.rs` and update `GitIndex` serialization.
-- To refine diff handling, update `FileDiffTracker` and ensure `delete_lines` still maps deletions back to the correct originating commits.
-- To parallelize indexing, isolate tokenisation workloads while keeping ordered updates on shared `Document`s to avoid race conditions.
+- New per-token metadata lives beside `WordIndex` and must be threaded through `GitIndexer`, `Document`, and `GitIndex` persistence.
+- When altering diff handling, ensure `FileDiffTracker` stays consistent with commit lifetimes and `Document::remove_words` continues to seal gaps.
+- The bitmap helpers assume dense roaring bitmaps; keep intersections cheap by minimising clone-heavy operations when adding new search paths.
