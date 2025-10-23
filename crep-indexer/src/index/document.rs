@@ -1,10 +1,8 @@
 use ahash::AHashMap;
 use ahash::AHashSet;
 use fst::Set;
-use priority_queue::PriorityQueue;
 use serde::Deserialize;
 use serde::Serialize;
-use std::cmp::Ordering;
 use trigram_hash::trigram_hash::TrigramKey;
 
 use roaring::RoaringBitmap;
@@ -19,30 +17,9 @@ pub struct WordKey {
     pub line: usize,
 }
 
-#[derive(Debug, Eq, PartialEq, Serialize, Deserialize, Clone, Copy)]
-pub struct CommitEndPriority(pub Option<usize>);
-
-impl Ord for CommitEndPriority {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (&self.0, &other.0) {
-            (None, None) => Ordering::Equal,
-            (None, Some(_)) => Ordering::Greater,
-            (Some(_), None) => Ordering::Less,
-            (Some(a), Some(b)) => a.cmp(b),
-        }
-    }
-}
-
-impl PartialOrd for CommitEndPriority {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 #[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WordIndex {
-    // PQ where CommitEndPriority refers to the last commit that the word was used.
-    pub word_history: PriorityQueue<WordKey, CommitEndPriority>,
+    pub word_history: AHashSet<WordKey>,
 
     // Whether the specific word is included in a given commit.
     pub commit_inclutivity: RoaringBitmap,
@@ -76,13 +53,10 @@ impl Document {
             let word_index = self.words.entry(word).or_default();
 
             for line in lines {
-                word_index.word_history.push(
-                    WordKey {
-                        commit_id: commit_index,
-                        line,
-                    },
-                    CommitEndPriority(None),
-                );
+                word_index.word_history.insert(WordKey {
+                    commit_id: commit_index,
+                    line,
+                });
             }
 
             word_index.commit_inclutivity.insert(commit_index as u32);
@@ -96,14 +70,12 @@ impl Document {
         words: &[(TrigramKey, Vec<WordKey>)],
     ) {
         for (word, word_keys) in words {
+            debug_assert!(!word_keys.is_empty());
+
             let word_index = self.words.get_mut(word);
             if let Some(word_index) = word_index {
                 for word_key in word_keys {
-                    word_index.word_history.change_priority(
-                        word_key,
-                        // TODO: Get prev commit properly.
-                        CommitEndPriority(Some(commit_index - 1)),
-                    );
+                    word_index.word_history.remove(word_key);
                 }
             }
         }
@@ -111,7 +83,7 @@ impl Document {
         let modified_words: AHashSet<TrigramKey> =
             words.iter().map(|(word, _)| *word).collect();
         for word in modified_words {
-            self.update_commit_inclutivity(commit_index, word);
+            self.update_commit_inclutivity_after_removal(commit_index, word);
         }
 
         self.doc_modified_commits.insert(commit_index as u32);
@@ -119,44 +91,20 @@ impl Document {
 
     pub fn remove_document(&mut self, commit_index: CommitIndex) {
         for word_index in self.words.values_mut() {
-            let mut is_commit_end_modified = false;
-
-            // If there is a word key that is not marked as ended,
-            // then end it now.
-            loop {
-                let end = match word_index.word_history.peek() {
-                    Some((key, priority)) => Some((*key, priority)),
-                    _ => None,
-                };
-
-                if let Some((key, priority)) = end
-                    && priority == &CommitEndPriority(None)
-                {
-                    word_index.word_history.change_priority(
-                        &key,
-                        // TODO: Get prev commit properly.
-                        CommitEndPriority(Some(commit_index - 1)),
-                    );
-
-                    is_commit_end_modified = true;
-                    continue;
-                }
-
-                break;
-            }
-
-            if is_commit_end_modified {
+            if !word_index.word_history.is_empty() {
                 let last_enabled_commit = word_index.commit_inclutivity.max();
                 word_index.commit_inclutivity.insert_range(
-                    last_enabled_commit.unwrap()..((commit_index) as u32),
+                    last_enabled_commit.unwrap()..(commit_index as u32),
                 );
+
+                word_index.word_history.clear();
             }
         }
 
         self.doc_modified_commits.insert(commit_index as u32);
     }
 
-    fn update_commit_inclutivity(
+    fn update_commit_inclutivity_after_removal(
         &mut self,
         commit_index: CommitIndex,
         word: TrigramKey,
@@ -167,22 +115,20 @@ impl Document {
         }
 
         let word_index = word_index.unwrap();
-        if let Some((_, last_commit)) = word_index.word_history.peek() {
-            let last_enabled_commit = word_index.commit_inclutivity.max();
-            let end_commit_index = match last_commit {
-                CommitEndPriority(None) => commit_index,
-                CommitEndPriority(Some(commit_id)) => *commit_id,
-            };
-
-            if let Some(last_enabled_bit) = last_enabled_commit {
-                word_index.commit_inclutivity.insert_range(
-                    last_enabled_bit..((end_commit_index + 1) as u32),
-                );
-                word_index.commit_inclutivity.optimize();
-            } else {
-                word_index
-                    .commit_inclutivity
-                    .insert(end_commit_index as u32);
+        if word_index.word_history.is_empty() {
+            // Then commit_index - 1 is the last time that the document contained the word.
+            match word_index.commit_inclutivity.max() {
+                Some(last_enabled_bit) => {
+                    word_index.commit_inclutivity.insert_range(
+                        last_enabled_bit..((commit_index - 1) as u32),
+                    );
+                    word_index.commit_inclutivity.optimize();
+                }
+                None => {
+                    word_index
+                        .commit_inclutivity
+                        .insert((commit_index - 1) as u32);
+                }
             }
         }
     }
@@ -193,9 +139,7 @@ impl Document {
                 continue;
             }
 
-            if let Some((_, CommitEndPriority(None))) =
-                index.word_history.peek()
-            {
+            if !index.word_history.is_empty() {
                 match index.commit_inclutivity.max() {
                     Some(last_enabled_bit) => {
                         index.commit_inclutivity.insert_range(
@@ -261,21 +205,15 @@ mod document_test {
                     (
                         "hi".into(),
                         WordIndex {
-                            word_history: PriorityQueue::from(vec![
-                                (
-                                    WordKey {
-                                        commit_id: 1,
-                                        line: 1
-                                    },
-                                    CommitEndPriority(None)
-                                ),
-                                (
-                                    WordKey {
-                                        commit_id: 1,
-                                        line: 2
-                                    },
-                                    CommitEndPriority(None)
-                                )
+                            word_history: AHashSet::from_iter([
+                                WordKey {
+                                    commit_id: 1,
+                                    line: 1
+                                },
+                                WordKey {
+                                    commit_id: 1,
+                                    line: 2
+                                },
                             ]),
                             commit_inclutivity: RoaringBitmap::from([1])
                         }
@@ -283,21 +221,15 @@ mod document_test {
                     (
                         "hello".into(),
                         WordIndex {
-                            word_history: PriorityQueue::from(vec![
-                                (
-                                    WordKey {
-                                        commit_id: 1,
-                                        line: 1
-                                    },
-                                    CommitEndPriority(None)
-                                ),
-                                (
-                                    WordKey {
-                                        commit_id: 1,
-                                        line: 3
-                                    },
-                                    CommitEndPriority(None)
-                                )
+                            word_history: AHashSet::from_iter([
+                                WordKey {
+                                    commit_id: 1,
+                                    line: 1
+                                },
+                                WordKey {
+                                    commit_id: 1,
+                                    line: 3
+                                },
                             ]),
                             commit_inclutivity: RoaringBitmap::from([1])
                         }
@@ -317,21 +249,15 @@ mod document_test {
                     (
                         "bye".into(),
                         WordIndex {
-                            word_history: PriorityQueue::from_iter(vec![
-                                (
-                                    WordKey {
-                                        commit_id: 1,
-                                        line: 123,
-                                    },
-                                    CommitEndPriority(None),
-                                ),
-                                (
-                                    WordKey {
-                                        commit_id: 2,
-                                        line: 10,
-                                    },
-                                    CommitEndPriority(Some(3)),
-                                ),
+                            word_history: AHashSet::from_iter([
+                                WordKey {
+                                    commit_id: 1,
+                                    line: 123,
+                                },
+                                WordKey {
+                                    commit_id: 2,
+                                    line: 10,
+                                },
                             ]),
                             commit_inclutivity:
                                 RoaringBitmap::from_sorted_iter(1..5).unwrap(),
@@ -340,13 +266,10 @@ mod document_test {
                     (
                         "hel".into(),
                         WordIndex {
-                            word_history: PriorityQueue::from_iter(vec![(
-                                WordKey {
-                                    commit_id: 8,
-                                    line: 12,
-                                },
-                                CommitEndPriority(Some(6)),
-                            )]),
+                            word_history: AHashSet::from_iter([WordKey {
+                                commit_id: 8,
+                                line: 12,
+                            }]),
                             commit_inclutivity:
                                 RoaringBitmap::from_sorted_iter(3..8).unwrap(),
                         },
@@ -369,97 +292,5 @@ mod document_test {
         .unwrap();
 
         assert_eq!(decoded, document);
-    }
-}
-
-#[cfg(test)]
-mod pq_test {
-    use super::*;
-
-    fn insert_into_pq(
-        pq: &mut PriorityQueue<WordKey, CommitEndPriority>,
-        commit_id: CommitIndex,
-        line: usize,
-        priority: Option<CommitIndex>,
-    ) {
-        pq.push(WordKey { commit_id, line }, CommitEndPriority(priority));
-    }
-
-    #[test]
-    fn test_priority_queue() {
-        let mut pq = PriorityQueue::<WordKey, CommitEndPriority>::new();
-
-        insert_into_pq(&mut pq, 0, 5, Some(2));
-        insert_into_pq(&mut pq, 0, 7, Some(1));
-        insert_into_pq(&mut pq, 1, 10, None);
-        insert_into_pq(&mut pq, 2, 8, Some(4));
-        insert_into_pq(&mut pq, 3, 8, Some(3));
-        insert_into_pq(&mut pq, 10, 20, Some(1));
-
-        assert_eq!(
-            pq.get(&WordKey {
-                commit_id: 0,
-                line: 7
-            }),
-            Some((
-                &WordKey {
-                    commit_id: 0,
-                    line: 7
-                },
-                &CommitEndPriority(Some(1))
-            ))
-        );
-
-        assert_eq!(
-            pq.pop(),
-            Some((
-                WordKey {
-                    commit_id: 1,
-                    line: 10
-                },
-                CommitEndPriority(None)
-            ))
-        );
-
-        assert_eq!(
-            pq.pop(),
-            Some((
-                WordKey {
-                    commit_id: 2,
-                    line: 8
-                },
-                CommitEndPriority(Some(4))
-            ))
-        );
-
-        assert_eq!(
-            pq.pop(),
-            Some((
-                WordKey {
-                    commit_id: 3,
-                    line: 8
-                },
-                CommitEndPriority(Some(3))
-            ))
-        );
-
-        pq.change_priority(
-            &WordKey {
-                commit_id: 10,
-                line: 20,
-            },
-            CommitEndPriority(Some(4)),
-        );
-
-        assert_eq!(
-            pq.pop(),
-            Some((
-                WordKey {
-                    commit_id: 10,
-                    line: 20
-                },
-                CommitEndPriority(Some(4))
-            ))
-        );
     }
 }

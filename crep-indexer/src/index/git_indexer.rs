@@ -1,5 +1,6 @@
 use crate::git::diff::FileDiffTracker;
 use crate::git::diff::LineDeleteResult;
+use crate::index::git_index_debug::IndexDebugStats;
 use ahash::AHashMap;
 use ahash::AHashSet;
 use anyhow::Result;
@@ -7,6 +8,7 @@ use git2::Delta;
 use git2::DiffDelta;
 use git2::DiffFlags;
 use git2::ObjectType;
+use git2::Oid;
 use git2::Repository;
 use git2::Sort;
 use git2::Tree;
@@ -14,9 +16,11 @@ use git2::TreeWalkResult;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use log::debug;
+use log::trace;
 use roaring::RoaringBitmap;
 use std::cell::RefCell;
 use std::path::Path;
+use std::time::Instant;
 use trigram_hash::trigram_hash::TrigramKey;
 use trigram_hash::trigram_hash::split_lines_to_tokens;
 
@@ -96,6 +100,7 @@ impl GitIndexer {
         let mut revwalk = repo.revwalk()?;
 
         revwalk.push_head()?;
+        revwalk.simplify_first_parent()?;
         revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::REVERSE)?;
 
         let mut last_tree: Option<Tree> = None;
@@ -190,6 +195,8 @@ impl GitIndexer {
         repo: &Repository,
         commit_index: &CommitIndex,
     ) -> Result<()> {
+        let diff_start = Instant::now();
+
         let mut opts = git2::DiffOptions::new();
         opts.context_lines(0);
 
@@ -204,13 +211,17 @@ impl GitIndexer {
 
         let file_delta = RefCell::new(Vec::<GitDelta>::new());
 
+        let mut for_each_start_times = vec![];
+
         diff.foreach(
             &mut |delta, _| {
+                for_each_start_times.push(Instant::now());
+
                 // Ignore binary files.
                 if delta.flags().contains(DiffFlags::BINARY) {
                     // If the binary diffs are detected, 
                     for path in get_file_names_from_diff_delta(&delta) {
-                        debug!("Ignored: {}", path);
+                        trace!("Ignored: {}", path);
                         self.ignored_non_utf8_file_path_set.insert(path);
                     }
 
@@ -351,6 +362,19 @@ impl GitIndexer {
             .unwrap();
         }
 
+        let git_delta_index_done = Instant::now();
+        debug!(
+            "Diff stat: {} {}",
+            IndexDebugStats::new(
+                diff_start,
+                for_each_start_times,
+                git_delta_index_done
+            ),
+            hex::encode(Oid::from_bytes(
+                &self.commit_index_to_commit_id[*commit_index]
+            )?)
+        );
+
         Ok(())
     }
 
@@ -361,55 +385,57 @@ impl GitIndexer {
         repo: &Repository,
     ) -> Result<()> {
         tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
-            if entry.kind() == Some(ObjectType::Blob) {
-                if let Some(name) = entry.name() {
-                    let object_id = entry.id();
-                    let blob = match repo.find_blob(object_id) {
-                        Ok(blob) => blob,
-                        Err(_) => return TreeWalkResult::Ok,
-                    };
+            if entry.kind() != Some(ObjectType::Blob) {
+                return TreeWalkResult::Ok;
+            }
 
-                    let file_ext = Path::new(name)
-                        .extension()
-                        .unwrap_or_default()
-                        .to_str()
-                        .unwrap();
+            if let Some(name) = entry.name() {
+                let object_id = entry.id();
+                let blob = match repo.find_blob(object_id) {
+                    Ok(blob) => blob,
+                    Err(_) => return TreeWalkResult::Ok,
+                };
 
-                    if !self
-                        .utf8_file_checker
-                        .is_utf8_document(blob.content(), file_ext)
-                    {
-                        return TreeWalkResult::Ok;
-                    }
+                let file_ext = Path::new(name)
+                    .extension()
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap();
 
-                    let content = std::str::from_utf8(blob.content());
-
-                    if content.is_err() {
-                        if self.config.ignore_utf8_error {
-                            self.ignored_non_utf8_file_path_set
-                                .insert(format!("{root}{name}"));
-
-                            return TreeWalkResult::Ok;
-                        } else {
-                            panic!("Non UTF-8 file found at {root}{name}");
-                        }
-                    }
-
-                    let content = content.unwrap();
-                    let file_name = &format!("{root}{name}");
-
-                    let file_id = self.get_file_id_insert_if_missing(file_name);
-                    self.add_new_lines(
-                        *commit_index,
-                        file_id,
-                        /*prev_line_start=*/ 0,
-                        /*new_line_start=*/ 0,
-                        &content
-                            .lines()
-                            .map(|line| line.to_string())
-                            .collect::<Vec<String>>(),
-                    );
+                if !self
+                    .utf8_file_checker
+                    .is_utf8_document(blob.content(), file_ext)
+                {
+                    return TreeWalkResult::Ok;
                 }
+
+                let content = std::str::from_utf8(blob.content());
+
+                if content.is_err() {
+                    if self.config.ignore_utf8_error {
+                        self.ignored_non_utf8_file_path_set
+                            .insert(format!("{root}{name}"));
+
+                        return TreeWalkResult::Ok;
+                    } else {
+                        panic!("Non UTF-8 file found at {root}{name}");
+                    }
+                }
+
+                let content = content.unwrap();
+                let file_name = &format!("{root}{name}");
+
+                let file_id = self.get_file_id_insert_if_missing(file_name);
+                self.add_new_lines(
+                    *commit_index,
+                    file_id,
+                    /*prev_line_start=*/ 0,
+                    /*new_line_start=*/ 0,
+                    &content
+                        .lines()
+                        .map(|line| line.to_string())
+                        .collect::<Vec<String>>(),
+                );
             }
 
             TreeWalkResult::Ok
@@ -694,9 +720,6 @@ struct GitDelta {
 
 #[cfg(test)]
 mod index_tree {
-    use priority_queue::PriorityQueue;
-
-    use crate::index::document::CommitEndPriority;
     use crate::index::document::WordIndex;
 
     use super::*;
@@ -756,7 +779,6 @@ mod index_tree {
         );
         assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
 
-        let not_end_pri = CommitEndPriority(None);
         let commit_incl = RoaringBitmap::from_sorted_iter(0..1).unwrap();
 
         assert_eq!(
@@ -768,47 +790,35 @@ mod index_tree {
                         (
                             "a".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 0,
-                                        line: 0
-                                    },
-                                    not_end_pri
-                                )]),
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 0,
+                                    line: 0
+                                },]),
                                 commit_inclutivity: commit_incl.clone()
                             }
                         ),
                         (
                             "bc".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 0,
-                                        line: 1
-                                    },
-                                    not_end_pri
-                                )]),
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 0,
+                                    line: 1
+                                },]),
                                 commit_inclutivity: commit_incl.clone()
                             }
                         ),
                         (
                             "def".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![
-                                    (
-                                        WordKey {
-                                            commit_id: 0,
-                                            line: 2
-                                        },
-                                        not_end_pri
-                                    ),
-                                    (
-                                        WordKey {
-                                            commit_id: 0,
-                                            line: 3
-                                        },
-                                        not_end_pri
-                                    )
+                                word_history: AHashSet::from_iter(vec![
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 2
+                                    },
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 3
+                                    },
                                 ]),
                                 commit_inclutivity: commit_incl.clone()
                             }
@@ -816,13 +826,12 @@ mod index_tree {
                         (
                             "efa".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
+                                word_history: AHashSet::from_iter(vec![
                                     WordKey {
                                         commit_id: 0,
                                         line: 3
                                     },
-                                    not_end_pri
-                                )]),
+                                ]),
                                 commit_inclutivity: commit_incl.clone()
                             }
                         ),
@@ -892,7 +901,6 @@ mod index_tree {
             vec!["file.txt".to_owned(), "file2.txt".to_owned()]
         );
 
-        let not_end_pri = CommitEndPriority(None);
         let first_commit_incl = RoaringBitmap::from_sorted_iter(0..2).unwrap();
         let second_commit_incl = RoaringBitmap::from_sorted_iter(1..2).unwrap();
 
@@ -906,15 +914,12 @@ mod index_tree {
                             (
                                 "abc".into(),
                                 WordIndex {
-                                    word_history: PriorityQueue::from_iter(
-                                        vec![(
-                                            WordKey {
-                                                commit_id: 0,
-                                                line: 0
-                                            },
-                                            not_end_pri
-                                        ),]
-                                    ),
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 0,
+                                            line: 0
+                                        },
+                                    ]),
                                     commit_inclutivity: first_commit_incl
                                         .clone()
                                 }
@@ -922,15 +927,12 @@ mod index_tree {
                             (
                                 "bcd".into(),
                                 WordIndex {
-                                    word_history: PriorityQueue::from_iter(
-                                        vec![(
-                                            WordKey {
-                                                commit_id: 0,
-                                                line: 0
-                                            },
-                                            not_end_pri
-                                        )]
-                                    ),
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 0,
+                                            line: 0
+                                        },
+                                    ]),
                                     commit_inclutivity: first_commit_incl
                                         .clone()
                                 }
@@ -948,13 +950,10 @@ mod index_tree {
                         words: AHashMap::from([(
                             "123".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 1,
-                                        line: 0
-                                    },
-                                    not_end_pri
-                                ),]),
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 1,
+                                    line: 0
+                                },]),
                                 commit_inclutivity: second_commit_incl.clone()
                             }
                         ),]),
@@ -1015,9 +1014,6 @@ mod index_tree {
         );
         assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
 
-        let not_end_pri = CommitEndPriority(None);
-        let end_at_first_commit = CommitEndPriority(Some(0));
-
         let first_and_second_incl =
             RoaringBitmap::from_sorted_iter(0..2).unwrap();
         let first_commit_incl = RoaringBitmap::from_sorted_iter(0..1).unwrap();
@@ -1032,21 +1028,15 @@ mod index_tree {
                         (
                             "1".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![
-                                    (
-                                        WordKey {
-                                            commit_id: 0,
-                                            line: 0
-                                        },
-                                        not_end_pri
-                                    ),
-                                    (
-                                        WordKey {
-                                            commit_id: 1,
-                                            line: 3
-                                        },
-                                        not_end_pri
-                                    ),
+                                word_history: AHashSet::from_iter([
+                                    WordKey {
+                                        commit_id: 0,
+                                        line: 0
+                                    },
+                                    WordKey {
+                                        commit_id: 1,
+                                        line: 3
+                                    },
                                 ]),
                                 commit_inclutivity: first_and_second_incl
                                     .clone()
@@ -1055,26 +1045,17 @@ mod index_tree {
                         (
                             "2".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 0,
-                                        line: 1
-                                    },
-                                    end_at_first_commit
-                                ),]),
+                                word_history: AHashSet::new(),
                                 commit_inclutivity: first_commit_incl.clone()
                             }
                         ),
                         (
                             "3".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 0,
-                                        line: 2
-                                    },
-                                    not_end_pri
-                                ),]),
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 0,
+                                    line: 2
+                                },]),
                                 commit_inclutivity: first_and_second_incl
                                     .clone()
                             }
@@ -1082,26 +1063,20 @@ mod index_tree {
                         (
                             "abc".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 1,
-                                        line: 1
-                                    },
-                                    not_end_pri
-                                ),]),
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 1,
+                                    line: 1
+                                },]),
                                 commit_inclutivity: second_commit_incl.clone()
                             }
                         ),
                         (
                             "bcd".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 1,
-                                        line: 1
-                                    },
-                                    not_end_pri
-                                ),]),
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 1,
+                                    line: 1
+                                },]),
                                 commit_inclutivity: second_commit_incl.clone()
                             }
                         ),
@@ -1142,22 +1117,26 @@ mod index_tree {
         run(repo_path, &["git", "add", "."]);
         run(repo_path, &["git", "commit", "-m", "init"]);
 
-        std::fs::remove_file(repo_path.join("file.txt")).unwrap();
+        std::fs::write(repo_path.join("file.txt"), "1\n3\n").unwrap();
         run(repo_path, &["git", "add", "."]);
         run(repo_path, &["git", "commit", "-m", "second"]);
+
+        std::fs::remove_file(repo_path.join("file.txt")).unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "third"]);
 
         let repo = Repository::open(repo_path).unwrap();
         indexer.index_history(repo).unwrap();
 
-        assert_eq!(indexer.commit_index_to_commit_id.len(), 2);
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 3);
         assert_eq!(
             indexer.file_name_to_id,
             AHashMap::from_iter([("file.txt".to_owned(), 0),])
         );
         assert_eq!(indexer.file_id_to_path, vec!["file.txt".to_owned()]);
 
-        let end_at_first_commit = CommitEndPriority(Some(0));
         let first_commit_incl = RoaringBitmap::from_sorted_iter(0..1).unwrap();
+        let first_and_second = RoaringBitmap::from_sorted_iter(0..2).unwrap();
 
         pretty_assertions::assert_eq!(
             indexer.file_id_to_document,
@@ -1168,47 +1147,29 @@ mod index_tree {
                         (
                             "1".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 0,
-                                        line: 0
-                                    },
-                                    end_at_first_commit
-                                ),]),
-                                commit_inclutivity: first_commit_incl.clone()
+                                word_history: AHashSet::new(),
+                                commit_inclutivity: first_and_second.clone()
                             }
                         ),
                         (
                             "2".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 0,
-                                        line: 1
-                                    },
-                                    end_at_first_commit
-                                ),]),
+                                word_history: AHashSet::new(),
                                 commit_inclutivity: first_commit_incl.clone()
                             }
                         ),
                         (
                             "3".into(),
                             WordIndex {
-                                word_history: PriorityQueue::from_iter(vec![(
-                                    WordKey {
-                                        commit_id: 0,
-                                        line: 2
-                                    },
-                                    end_at_first_commit
-                                ),]),
-                                commit_inclutivity: first_commit_incl.clone()
+                                word_history: AHashSet::new(),
+                                commit_inclutivity: first_and_second.clone()
                             }
                         ),
                     ]),
                     all_words: Some(
                         fst::Set::from_iter(["1", "2", "3"]).unwrap()
                     ),
-                    doc_modified_commits: RoaringBitmap::from_iter([0, 1])
+                    doc_modified_commits: RoaringBitmap::from_iter([0, 1, 2])
                 }
             ),])
         );
@@ -1223,5 +1184,148 @@ mod index_tree {
                 }
             ),])
         )
+    }
+
+    #[test]
+    fn index_merged_branch_test() {
+        let mut indexer = GitIndexer::new(GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: false,
+        });
+
+        let repo = init_repo();
+        let repo_path = repo.path();
+
+        std::fs::write(repo_path.join("file1.txt"), "a").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "init"]);
+
+        run(repo_path, &["git", "checkout", "-b", "branch"]);
+        std::fs::write(repo_path.join("file1.txt"), "b").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "branch-commit1"]);
+
+        std::fs::write(repo_path.join("file1.txt"), "c").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "branch-commit2"]);
+
+        run(repo_path, &["git", "checkout", "main"]);
+        std::fs::write(repo_path.join("file2.txt"), "x").unwrap();
+
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "main-commit2"]);
+
+        // Now merge branch into main.
+        run(repo_path, &["git", "merge", "branch"]);
+        let result = run(
+            repo_path,
+            &["git", "log", "--oneline", "--graph", "--decorate", "--all"],
+        );
+        print!("{}", result.1);
+
+        let repo = Repository::open(repo_path).unwrap();
+        indexer.index_history(repo).unwrap();
+
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 3);
+        assert_eq!(
+            indexer.file_name_to_id,
+            AHashMap::from_iter([
+                ("file1.txt".to_owned(), 0),
+                ("file2.txt".to_owned(), 1)
+            ])
+        );
+        assert_eq!(
+            indexer.file_id_to_path,
+            vec!["file1.txt".to_owned(), "file2.txt".to_owned()]
+        );
+
+        pretty_assertions::assert_eq!(
+            indexer.file_id_to_document,
+            AHashMap::from([
+                (
+                    0,
+                    Document {
+                        words: AHashMap::from([
+                            (
+                                "a".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([]),
+                                    commit_inclutivity:
+                                        RoaringBitmap::from_sorted_iter(0..1)
+                                            .unwrap()
+                                }
+                            ),
+                            (
+                                "c".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 2,
+                                            line: 0
+                                        },
+                                    ]),
+                                    commit_inclutivity:
+                                        RoaringBitmap::from_sorted_iter(2..3)
+                                            .unwrap()
+                                }
+                            ),
+                        ]),
+                        all_words: Some(
+                            fst::Set::from_iter(["a", "c"]).unwrap()
+                        ),
+                        doc_modified_commits: RoaringBitmap::from_iter([0, 2])
+                    }
+                ),
+                (
+                    1,
+                    Document {
+                        words: AHashMap::from([(
+                            "x".into(),
+                            WordIndex {
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 1,
+                                    line: 0
+                                }]),
+                                commit_inclutivity:
+                                    RoaringBitmap::from_sorted_iter(1..3)
+                                        .unwrap()
+                            }
+                        )]),
+                        all_words: Some(fst::Set::from_iter(["x"]).unwrap()),
+                        doc_modified_commits: RoaringBitmap::from_iter([1])
+                    }
+                )
+            ])
+        );
+
+        assert_eq!(
+            indexer.word_to_file_id_ever_contained,
+            AHashMap::from([
+                ("a".into(), RoaringBitmap::from_iter([0])),
+                ("c".into(), RoaringBitmap::from_iter([0])),
+                ("x".into(), RoaringBitmap::from_iter([1])),
+            ])
+        );
+
+        assert_eq!(
+            indexer.file_id_to_diff_tracker,
+            AHashMap::from([
+                (
+                    0,
+                    FileDiffTracker {
+                        commit_line_end: vec![1],
+                        commit_indexes: vec![(2, 0)]
+                    }
+                ),
+                (
+                    1,
+                    FileDiffTracker {
+                        commit_line_end: vec![1],
+                        commit_indexes: vec![(1, 0)]
+                    }
+                )
+            ])
+        );
     }
 }

@@ -141,6 +141,8 @@ impl<'a> Searcher<'a> {
         let tree = commit.tree()?;
 
         let file_path = &self.index.file_id_to_path[file_id];
+        debug!("File path : {file_path} {}", hex::encode(commit_id));
+
         let entry = tree.get_path(Path::new(file_path))?;
 
         let object = entry.to_object(&self.repo)?;

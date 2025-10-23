@@ -47,6 +47,12 @@ struct Args {
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
+    if let Some(log) = &args.log {
+        init_file_logger(log, LevelFilter::Debug).unwrap();
+    } else if args.debug {
+        env_logger::init();
+    }
+
     let index = build_index(&args);
     if args.save_only {
         return Ok(());
@@ -55,16 +61,10 @@ fn main() -> io::Result<()> {
     let mut searcher = Searcher::new(&index, &args.path);
 
     if args.debug {
-        env_logger::init();
-
         handle_query(&mut searcher).unwrap();
 
         Ok(())
     } else {
-        if let Some(log) = args.log {
-            init_file_logger(&log, LevelFilter::Debug).unwrap();
-        }
-
         let mut terminal = ratatui::init();
         terminal.clear().unwrap();
 
