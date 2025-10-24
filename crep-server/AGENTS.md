@@ -1,21 +1,23 @@
-# crep-server – Current State & Integration Plan
+# crep-server Notes
 
-`crep-server` is an Axum + Leptos application scaffold ready to surface the Git history search UI over HTTP.
+The `crep-server` crate now targets a JSON-first Axum backend with a React front end.
 
-## Runtime (`src/main.rs`)
-- Loads configuration via `get_configuration`, extracts `LeptosOptions`, and generates the Leptos route list (`generate_route_list(App)`).
-- Builds an Axum `Router` with `leptos_routes` for SSR + hydration, a static file/error fallback, and stores `LeptosOptions` in application state.
-- Binds a TCP listener on `site_addr`, logs the bound URL, and serves the app with `axum::serve` on Tokio.
+## Server (`server`)
+- `main.rs` bootstraps tracing, binds to `BIND_ADDR` (defaults to `127.0.0.1:3000`), and serves the router.
+- `lib.rs` exposes `router()` which aggregates routes; add per-module routers here as the API grows.
+- `api.rs` is the initial REST surface (currently only `/api/health`). Expand this into submodules (`search`, `indices`, etc.) as functionality is added.
 
-## UI Shell (`src/app.rs`)
-- `shell` renders the base HTML document, wiring hydration and autoreload scripts provided by `leptos`.
-- `App` sets up meta context, attaches the stylesheet, and wraps routes in a `Router` + `Routes` pair (single `HomePage` today).
-- `HomePage` is the template counter from the Leptos starter, demonstrating reactive state via `RwSignal` and event handlers.
+### OpenAPI
+- Add `utoipa` + `utoipa-swagger-ui` when you are ready to generate specs.
+- Derive `ToSchema` on DTOs in `api.rs` or dedicated `dto` modules.
+- Surface docs at `/docs` and `/docs.json`, then generate TypeScript bindings for the SPA.
 
-## Bringing Search Online
-1. Load a `GitIndex` during startup (e.g., in `main` before constructing the router) and store it in shared state alongside a `Repository` path.
-2. Add Axum handlers that accept queries, construct a `GitSearcher`, and respond with JSON results (`SearchResult` or custom DTOs).
-3. Replace `HomePage` with Leptos components that call the new endpoints (or leverage `wasm-bindgen` to share client logic) and render highlighted line snippets.
-4. Consider streaming or pagination for large result sets; reuse `crep_indexer::search::result_viewer` utilities server-side to avoid reimplementing highlighting.
+## Web (`web`)
+- Vite + React + TypeScript, proxied to the Axum server during development.
+- Use PNPM workspaces (`pnpm-workspace.yaml`) to share future TS packages (e.g., generated API client).
+- SPA bootstraps from `src/main.tsx` and calls `/api/health` as a smoke test.
 
-The server currently serves as a starting point—wire in the shared crate APIs above to deliver real search functionality.
+## Next Integration Steps
+1. Load a `GitIndex` in server state and expose search routes.
+2. Formalize API contracts with OpenAPI and generate a shared TS client.
+3. Serve `web/dist` from Axum for production deploys (e.g., mount with `tower_http::services::ServeDir`).
