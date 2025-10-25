@@ -3,35 +3,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use axum::routing::{get, post};
 use axum::serve;
-use axum::Router;
 use crep_indexer::index::git_index::GitIndex;
+use crep_server::{AppState, router};
 use git2::Repository;
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-
-use crate::api::docs_json;
-use crate::api::health::health;
-use crate::api::search::search;
-
-mod api;
-
-#[derive(Clone)]
-pub struct AppState {
-    pub index: Arc<Mutex<GitIndex>>,
-    pub repo: Arc<Mutex<Repository>>,
-}
-
-pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/api/health", get(health))
-        .route("/api/search", post(search))
-        .route("/docs.json", get(docs_json))
-        .with_state(state)
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
