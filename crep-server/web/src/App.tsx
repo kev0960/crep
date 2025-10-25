@@ -1,16 +1,21 @@
 import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { executeSearch } from "./api/client";
-import type { LineMatch, MatchDetail, SearchHit, SearchMode } from "./api/types";
+import type {
+  LineMatch,
+  MatchDetail,
+  SearchHit,
+  SearchMode,
+} from "./api/types";
 
-const CREP_ASCII = [
-  "  _____ ____  ______ _____ ",
-  " / ____/ __ \\|  ____|  __ \\",
-  "| |   | |  | | |__  | |__) |",
-  "| |   | |  | |  __| |  _  / ",
-  "| |___| |__| | |____| | \\ \\ ",
-  " \\_____|\\___/|______|_|  \\_\\",
-].join("\n");
+const CREP_ASCII = `
+   _____ _____  ______ _____  
+  / ____|  __ \|  ____|  __ \ 
+ | |    | |__) | |__  | |__) |
+ | |    |  _  /|  __| |  ___/ 
+ | |____| | \ \| |____| |     
+  \_____|_|  \_\______|_|     
+`;
 
 const pageStyles: CSSProperties = {
   minHeight: "100vh",
@@ -34,8 +39,8 @@ const searchBoxStyles: CSSProperties = {
   background: "#fff",
   borderRadius: "999px",
   padding: "0.75rem 1.25rem",
-  boxShadow:
-    "0 1px 4px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04)",
+  boxShadow: "0 1px 4px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04)",
+  margin: "0 auto",
 };
 
 const highlightLine = (line: LineMatch) => {
@@ -61,13 +66,10 @@ const highlightLine = (line: LineMatch) => {
       );
     }
 
-    const highlighted =
-      line.content.slice(start, end) || highlight.term;
+    const highlighted = line.content.slice(start, end) || highlight.term;
 
     segments.push(
-      <mark key={`mark-${line.line_number}-${index}`}>
-        {highlighted}
-      </mark>,
+      <mark key={`mark-${line.line_number}-${index}`}>{highlighted}</mark>,
     );
 
     cursor = Math.max(cursor, end);
@@ -121,10 +123,7 @@ const renderMatchSection = (
           }}
         >
           <span>
-            Commit:{" "}
-            <code>
-              {detail.commit_sha.substring(0, 7)}
-            </code>
+            Commit: <code>{detail.commit_sha.substring(0, 7)}</code>
           </span>
           <span>When: {formattedDate}</span>
         </div>
@@ -192,9 +191,7 @@ function App() {
       setResults(response.results);
     } catch (err) {
       setResults([]);
-      setError(
-        err instanceof Error ? err.message : "Unknown search error.",
-      );
+      setError(err instanceof Error ? err.message : "Unknown search error.");
     } finally {
       setLoading(false);
     }

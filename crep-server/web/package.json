@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "generate:api": "cargo run --manifest-path ../server/Cargo.toml --bin openapi-export -- --format json | node scripts/generate-types.mjs --out src/api/types.ts"
+    "generate:api": "cargo run --manifest-path ../server/Cargo.toml --bin openapi-export  | node scripts/generate-types.mjs --out src/api/types.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
