@@ -38,7 +38,7 @@ const searchBoxStyles: CSSProperties = {
     "0 1px 4px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04)",
 };
 
-function highlightLine(line: LineMatch) {
+const highlightLine = (line: LineMatch) => {
   if (!line.highlights.length) {
     return line.content;
   }
@@ -82,9 +82,12 @@ function highlightLine(line: LineMatch) {
   }
 
   return segments;
-}
+};
 
-function renderMatchSection(label: string, detail: MatchDetail | null) {
+const renderMatchSection = (
+  label: string,
+  detail: MatchDetail | null | undefined,
+) => {
   if (!detail) {
     return null;
   }
@@ -168,7 +171,7 @@ function renderMatchSection(label: string, detail: MatchDetail | null) {
       </div>
     </article>
   );
-}
+};
 
 function App() {
   const [query, setQuery] = useState("");
