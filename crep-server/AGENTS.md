@@ -1,20 +1,23 @@
-# crep-server – Current State & Integration Plan
+# crep-server Notes
 
-`crep-server` is an Axum + Leptos application scaffold meant to host a web UI for the Git history search engine.
+The `crep-server` crate now targets a JSON-first Axum backend with a React front end.
 
-## Runtime (`src/main.rs`)
-- Loads configuration via `crep_server::app::get_configuration` (provided by the Leptos template).
-- Builds an Axum `Router` that serves server-rendered Leptos routes and static assets (fallback handler).
-- Listens on `LeptosOptions.site_addr` and runs with `tokio`.
+## Server (`server`)
+- `main.rs` bootstraps tracing, binds to `BIND_ADDR` (defaults to `127.0.0.1:3000`), and serves the router.
+- `lib.rs` exposes `router()` which aggregates routes; add per-module routers here as the API grows.
+- `api.rs` is the initial REST surface (currently only `/api/health`). Expand this into submodules (`search`, `indices`, etc.) as functionality is added.
 
-## UI Shell (`src/app.rs`)
-- Defines `shell` which wires Leptos hydration scripts, auto-reload, and mounts `<App/>`.
-- `<App/>` sets up meta context, stylesheet, and router; today it serves a single `HomePage` route with a click counter.
+### OpenAPI
+- Add `utoipa` + `utoipa-swagger-ui` when you are ready to generate specs.
+- Derive `ToSchema` on DTOs in `api.rs` or dedicated `dto` modules.
+- Surface docs at `/docs` and `/docs.json`, then generate TypeScript bindings for the SPA.
 
-## Next Steps to Integrate Search
-1. Load a `GitIndex` (built via CLI or on startup) during server initialization and store it in application state.
-2. Expose search endpoints (e.g., Axum handlers returning JSON) that construct `GitSearcher` instances per request.
-3. Replace the placeholder `HomePage` with UI components that call those endpoints and render highlighted results.
-4. Consider streaming responses for large result sets; reuse `GitSearchResultViewer` logic or port highlighting into the frontend.
+## Web (`web`)
+- Vite + React + TypeScript, proxied to the Axum server during development.
+- Use PNPM workspaces (`pnpm-workspace.yaml`) to share future TS packages (e.g., generated API client).
+- SPA bootstraps from `src/main.tsx` and calls `/api/health` as a smoke test.
 
-Until those steps are implemented, this crate remains a template but is ready to host the shared library once routing and state management are in place.
+## Next Integration Steps
+1. Load a `GitIndex` in server state and expose search routes.
+2. Formalize API contracts with OpenAPI and generate a shared TS client.
+3. Serve `web/dist` from Axum for production deploys (e.g., mount with `tower_http::services::ServeDir`).

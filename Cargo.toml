@@ -1,5 +1,5 @@
 [workspace]
-members = ["crep-indexer", "crep-indexer-cli", "crep-server", "trigram-hash"]
+members = ["crep-indexer", "crep-indexer-cli", "crep-server/server", "trigram-hash"]
 resolver = "3"
 
 [workspace.dependencies]
