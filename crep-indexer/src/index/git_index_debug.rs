@@ -1,7 +1,6 @@
-use std::{
-    fmt,
-    time::{Duration, Instant},
-};
+use std::fmt;
+use std::time::Duration;
+use std::time::Instant;
 
 pub struct IndexDebugStats {
     file_diff_times: Vec<Duration>,

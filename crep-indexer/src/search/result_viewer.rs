@@ -9,7 +9,6 @@ use git2::Oid;
 use git2::Repository;
 use owo_colors::OwoColorize;
 use regex::Regex;
-use roaring::RoaringBitmap;
 
 use crate::index::git_index::GitIndex;
 use crate::index::git_indexer::CommitIndex;
@@ -233,26 +232,4 @@ impl<'i> GitSearchResultViewer<'i> {
 
         word_pos_found_lines
     }
-}
-
-fn get_consecutive_ranges(
-    bitmap: &RoaringBitmap,
-) -> Vec<(CommitIndex, CommitIndex)> {
-    let mut commit_ranges: Vec<(CommitIndex, CommitIndex)> = vec![];
-
-    for bit in bitmap {
-        let bit_uz = bit as usize;
-
-        if let Some(last) = commit_ranges.last_mut() {
-            if last.1 == bit_uz {
-                last.1 = bit_uz + 1;
-            } else {
-                commit_ranges.push((bit_uz, bit_uz + 1))
-            }
-        } else {
-            commit_ranges.push((bit_uz, bit_uz + 1))
-        }
-    }
-
-    commit_ranges
 }

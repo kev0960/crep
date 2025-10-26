@@ -3,9 +3,6 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use chrono::DateTime;
-use chrono::FixedOffset;
-use chrono::TimeZone;
 use crep_indexer::index::git_index::GitIndex;
 use crep_indexer::search::git_searcher::GitSearcher;
 use crep_indexer::search::git_searcher::RawPerFileSearchResult;
@@ -18,7 +15,7 @@ use serde::Serialize;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
 
-use crate::AppState;
+use crate::server_context::ServerContext;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
@@ -109,7 +106,7 @@ pub struct ApiDoc;
     tag = "search"
 )]
 pub async fn search(
-    State(state): State<AppState>,
+    State(context): State<ServerContext>,
     Json(request): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let query = request.query.trim();
@@ -117,7 +114,7 @@ pub async fn search(
         return Err(ApiError::bad_request("query must not be empty"));
     }
 
-    let index = &state.index.lock().unwrap();
+    let index = &context.index.lock().unwrap();
 
     let mut searcher = GitSearcher::new(index);
     let option = Some(SearchOption {
@@ -131,7 +128,7 @@ pub async fn search(
             .map_err(|msg| ApiError::bad_request(&msg)),
     }?;
 
-    let repo = state.repo.lock().unwrap();
+    let repo = context.repo.lock().unwrap();
 
     let mut hits = Vec::with_capacity(raw_results.len());
     for result in raw_results {
@@ -340,19 +337,12 @@ fn commit_metadata(
 
     let sha = oid.to_string();
 
-    let time = commit.time();
-    let naive = chrono::NaiveDateTime::from_timestamp_opt(time.seconds(), 0)
+    let time = chrono::DateTime::from_timestamp_secs(commit.time().seconds())
         .ok_or_else(|| anyhow::anyhow!("invalid commit timestamp"))?;
-    let offset = FixedOffset::east_opt(time.offset_minutes() * 60)
-        .unwrap_or_else(|| {
-            // Fallback to UTC if offset is not representable.
-            FixedOffset::east_opt(0).unwrap()
-        });
-    let datetime: DateTime<FixedOffset> = offset.from_utc_datetime(&naive);
 
     Ok(CommitMetadata {
         sha,
-        date: datetime.to_rfc3339(),
+        date: time.to_rfc3339(),
         summary: commit
             .summary()
             .unwrap_or_else(|| commit.message().unwrap_or_default())

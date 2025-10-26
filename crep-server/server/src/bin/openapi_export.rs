@@ -1,6 +1,8 @@
-use std::io::{self, Write};
+use std::io::Write;
+use std::io::{self};
 
-use anyhow::{Context, Result};
+use anyhow::Context;
+use anyhow::Result;
 use crep_server::api::ApiDoc;
 use utoipa::OpenApi;
 
