@@ -1,4 +1,4 @@
-import type { CSSProperties, FormEvent, ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { executeSearch } from "./api/client";
 import type {
@@ -7,41 +7,16 @@ import type {
   SearchHit,
   SearchMode,
 } from "./api/types";
+import "./App.css";
 
 const CREP_ASCII = `
-   _____ _____  ______ _____  
-  / ____|  __ \|  ____|  __ \ 
- | |    | |__) | |__  | |__) |
- | |    |  _  /|  __| |  ___/ 
- | |____| | \ \| |____| |     
-  \_____|_|  \_\______|_|     
+   _____ _____  ______ _____   
+  / ____|  __ \|  ____|  __ \  
+ | |    | |__) | |__  | |__) | 
+ | |    |  _  /|  __| |  ___/  
+| |____| | \ \| |____| |      
+ \_____|_|  \_\______|_|      
 `;
-
-const pageStyles: CSSProperties = {
-  minHeight: "100vh",
-  background: "#f8f9fa",
-  color: "#202124",
-  fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-};
-
-const centeredColumn: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  padding: "0 1.5rem",
-};
-
-const searchBoxStyles: CSSProperties = {
-  width: "min(600px, 100%)",
-  display: "flex",
-  gap: "0.75rem",
-  alignItems: "center",
-  background: "#fff",
-  borderRadius: "999px",
-  padding: "0.75rem 1.25rem",
-  boxShadow: "0 1px 4px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04)",
-  margin: "0 auto",
-};
 
 const highlightLine = (line: LineMatch) => {
   if (!line.highlights.length) {
@@ -100,71 +75,32 @@ const renderMatchSection = (
     : date.toLocaleString();
 
   return (
-    <article
-      style={{
-        borderRadius: "12px",
-        border: "1px solid rgba(0,0,0,0.08)",
-        padding: "1rem 1.25rem",
-        background: "#fff",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-        marginTop: "1rem",
-      }}
-    >
-      <header style={{ marginBottom: "0.5rem" }}>
+    <article className="mt-4 rounded-xl border border-black/10 bg-white px-5 py-4 shadow-sm">
+      <header className="mb-2">
         <strong>{label}</strong>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "0.75rem",
-            fontSize: "0.9rem",
-            color: "#5f6368",
-            marginTop: "0.25rem",
-          }}
-        >
+        <div className="mt-1 flex flex-wrap gap-3 text-sm text-[#5f6368]">
           <span>
             Commit: <code>{detail.commit_sha.substring(0, 7)}</code>
           </span>
           <span>When: {formattedDate}</span>
         </div>
         {detail.commit_summary && (
-          <p style={{ marginTop: "0.5rem", color: "#3c4043" }}>
+          <p className="mt-2 text-[#3c4043]">
             {detail.commit_summary}
           </p>
         )}
       </header>
 
-      <div
-        style={{
-          background: "#f1f3f4",
-          borderRadius: "8px",
-          padding: "0.75rem",
-          overflowX: "auto",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: "0.95rem",
-        }}
-      >
+      <div className="overflow-x-auto rounded-lg bg-[#f1f3f4] p-3 font-mono text-[0.95rem]">
         {detail.lines.map((line) => (
           <div
             key={`${detail.commit_sha}-${line.line_number}`}
-            style={{
-              display: "flex",
-              gap: "1rem",
-              alignItems: "flex-start",
-            }}
+            className="flex items-start gap-4"
           >
-            <span
-              style={{
-                color: "#9aa0a6",
-                minWidth: "3rem",
-                textAlign: "right",
-              }}
-            >
+            <span className="min-w-[3rem] text-right text-[#9aa0a6]">
               {line.line_number}
             </span>
-            <code style={{ whiteSpace: "pre-wrap" }}>
-              {highlightLine(line)}
-            </code>
+            <code className="whitespace-pre-wrap">{highlightLine(line)}</code>
           </div>
         ))}
       </div>
@@ -198,72 +134,36 @@ function App() {
   };
 
   return (
-    <div style={pageStyles}>
+    <div className="min-h-screen bg-[#f8f9fa] font-sans text-[#202124]">
       <div
-        style={{
-          ...centeredColumn,
-          paddingTop: hasSubmitted ? "3rem" : "18vh",
-          transition: "padding 0.3s ease",
-        }}
+        className={`flex flex-col items-center px-6 transition-all duration-300 ${hasSubmitted ? "pt-12" : "pt-[18vh]"}`}
       >
         <pre
-          style={{
-            fontFamily:
-              "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-            textAlign: "center",
-            fontSize: hasSubmitted ? "1rem" : "1.3rem",
-            marginBottom: "2rem",
-            letterSpacing: "0.05rem",
-            color: "#202124",
-          }}
+          className={`mb-8 text-center font-mono tracking-[0.05rem] text-[#202124] ${hasSubmitted ? "text-base" : "text-[1.3rem]"}`}
         >
           {CREP_ASCII}
         </pre>
 
-        <form onSubmit={handleSubmit} style={{ width: "100%" }}>
-          <div style={searchBoxStyles}>
+        <form onSubmit={handleSubmit} className="w-full">
+          <div className="mx-auto flex w-full max-w-[600px] items-center gap-3 rounded-full bg-white px-5 py-3 shadow-[0_1px_4px_rgba(0,0,0,0.06),0_2px_8px_rgba(0,0,0,0.04)]">
             <input
               type="text"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search git history…"
-              style={{
-                flex: 1,
-                border: "none",
-                outline: "none",
-                fontSize: "1.05rem",
-                background: "none",
-              }}
+              className="flex-1 border-0 bg-transparent text-[1.05rem] focus:outline-none"
               aria-label="Search query"
             />
             <button
               type="submit"
-              style={{
-                padding: "0.55rem 1.2rem",
-                borderRadius: "999px",
-                border: "none",
-                background: "#1a73e8",
-                color: "#fff",
-                fontWeight: 600,
-                cursor: "pointer",
-                fontSize: "0.95rem",
-              }}
+              className="rounded-full border-0 bg-[#1a73e8] px-5 py-2 text-[0.95rem] font-semibold text-white transition-colors hover:bg-[#1558b0]"
             >
               Search
             </button>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              gap: "1.5rem",
-              marginTop: "0.75rem",
-              color: "#5f6368",
-              fontSize: "0.9rem",
-            }}
-          >
-            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div className="mt-3 flex justify-center gap-6 text-sm text-[#5f6368]">
+            <label className="flex items-center gap-1">
               <input
                 type="radio"
                 name="mode"
@@ -273,7 +173,7 @@ function App() {
               />
               Plain
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <label className="flex items-center gap-1">
               <input
                 type="radio"
                 name="mode"
@@ -289,52 +189,35 @@ function App() {
         {error && (
           <div
             role="alert"
-            style={{
-              marginTop: "1.25rem",
-              color: "#d93025",
-              fontSize: "0.95rem",
-            }}
+            className="mt-5 text-[0.95rem] text-[#d93025]"
           >
             {error}
           </div>
         )}
 
-        {loading && (
-          <p style={{ marginTop: "1.25rem", color: "#5f6368" }}>
-            Searching history…
-          </p>
-        )}
+        {loading && <p className="mt-5 text-[#5f6368]">Searching history…</p>}
       </div>
 
       {hasSubmitted && !loading && (
         <section
-          style={{
-            width: "min(900px, 100%)",
-            margin: "2.5rem auto 4rem",
-            padding: "0 1.5rem",
-          }}
+          className="mx-auto mb-16 mt-10 w-full max-w-[900px] px-6"
         >
           {results.length === 0 && !error ? (
-            <p style={{ color: "#5f6368" }}>
+            <p className="text-[#5f6368]">
               No results yet. Try a broader query or switch modes.
             </p>
           ) : (
             results.map((hit) => (
               <div
                 key={`${hit.file_path}-${hit.first_match.commit_sha}`}
-                style={{ marginBottom: "2.5rem" }}
+                className="mb-10"
               >
                 <h2
-                  style={{
-                    fontSize: "1.2rem",
-                    color: "#1a0dab",
-                    marginBottom: "0.25rem",
-                    wordBreak: "break-all",
-                  }}
+                  className="mb-1 text-[1.2rem] text-[#1a0dab] break-all"
                 >
                   {hit.file_path}
                 </h2>
-                <p style={{ color: "#5f6368", marginBottom: "0.5rem" }}>
+                <p className="mb-2 text-[#5f6368]">
                   Matching {hit.first_match.lines.length} line
                   {hit.first_match.lines.length === 1 ? "" : "s"}
                 </p>
