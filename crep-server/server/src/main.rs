@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::time::Instant;
 
 use axum::serve;
 use clap::Parser;
@@ -38,12 +39,23 @@ async fn main() -> anyhow::Result<()> {
 
     let config =
         ServerConfig::new(args.config.as_deref().unwrap_or("./config.yaml"))?;
+
+    let server_init_start_time = Instant::now();
+    info!("Start server initialization...");
+
     let context = ServerContext::new(&config)?;
 
     let app = router(context);
     let addr: SocketAddr = std::env::var("BIND_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3000".to_string())
         .parse()?;
+
+    info!(
+        "Initialization complete. Took {}",
+        Instant::now()
+            .duration_since(server_init_start_time)
+            .as_secs_f64()
+    );
 
     info!("serving api at http://{addr}");
 

@@ -16,7 +16,12 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
         let results = searcher.handle_query(&query)?;
 
         let mut lines: Vec<String> = vec![];
-        for result in results {
+
+        for (index, result) in results.iter().enumerate() {
+            if index >= 10 {
+                break;
+            }
+
             lines.push(format!("File: {}", result.first.file_name));
 
             match &result.last {

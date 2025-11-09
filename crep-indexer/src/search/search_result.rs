@@ -43,11 +43,11 @@ impl SearchResult {
             }
         };
 
-        if let Query::Words(words) = query {
-            if matches.len() != words.len() {
-                // Not every words are found in the document.
-                return Ok(None);
-            }
+        if let Query::Words(words) = query
+            && matches.len() != words.len()
+        {
+            // Not every words are found in the document.
+            return Ok(None);
         }
 
         if matches.is_empty() {

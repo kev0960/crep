@@ -504,6 +504,7 @@ dependencies = [
  "git2",
  "hex",
  "log",
+ "num-traits",
  "ratatui",
  "tui-input",
 ]

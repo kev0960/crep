@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Instant;
 
 use crep_indexer::index::git_index::GitIndex;
 use crep_indexer::search::git_searcher::GitSearcher;
@@ -8,6 +9,7 @@ use crep_indexer::search::search_result::SearchResult;
 use git2::Oid;
 use git2::Repository;
 use log::debug;
+use log::info;
 
 pub struct Searcher<'a> {
     repo: Repository,
@@ -42,6 +44,8 @@ impl<'a> Searcher<'a> {
     ) -> anyhow::Result<Vec<FirstAndLastFound>> {
         let mut search_results = vec![];
 
+        let raw_result_start = Instant::now();
+
         let raw_results = match query {
             Query::Regex(regex) => self.searcher.regex_search(
                 regex,
@@ -57,11 +61,18 @@ impl<'a> Searcher<'a> {
             )),
         };
 
+        info!(
+            "Raw result end: {}",
+            Instant::now().duration_since(raw_result_start).as_millis()
+        );
+
         if raw_results.is_err() {
             anyhow::bail!("{raw_results:?}")
         }
 
         let raw_results = raw_results.unwrap();
+
+        let mut raw_result_times = vec![Instant::now()];
 
         for result in raw_results {
             debug!(
@@ -106,8 +117,12 @@ impl<'a> Searcher<'a> {
             search_results.push(FirstAndLastFound {
                 first: first.unwrap(),
                 last,
-            })
+            });
+
+            raw_result_times.push(Instant::now());
         }
+
+        show_raw_result_timing(&raw_result_times);
 
         Ok(search_results)
     }
@@ -155,4 +170,15 @@ impl<'a> Searcher<'a> {
             anyhow::bail!("Path is not a blob file {file_path}");
         }
     }
+}
+
+fn show_raw_result_timing(timings: &[Instant]) {
+    let mut gaps = vec![];
+    for i in 0..timings.len() - 1 {
+        gaps.push(timings[i + 1].duration_since(timings[i]).as_secs_f64());
+    }
+
+    let total = gaps.iter().sum::<f64>();
+    info!("Avg result : {}ms", total / (gaps.len() as f64) * 1000.);
+    info!("Total : {}ms", total * 1000.);
 }

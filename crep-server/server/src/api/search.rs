@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -12,6 +14,7 @@ use git2::Oid;
 use git2::Repository;
 use serde::Deserialize;
 use serde::Serialize;
+use tracing::info;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
 
@@ -121,6 +124,8 @@ pub async fn search(
         max_num_to_find: request.limit,
     });
 
+    let search_start = Instant::now();
+
     let raw_results = match request.mode {
         SearchMode::Plain => Ok(searcher.search(query, option)),
         SearchMode::Regex => searcher
@@ -128,9 +133,15 @@ pub async fn search(
             .map_err(|msg| ApiError::bad_request(&msg)),
     }?;
 
+    info!(
+        "Getting raw results took: {}ms",
+        Instant::now().duration_since(search_start).as_millis()
+    );
+
     let repo = context.repo.lock().unwrap();
 
     let mut hits = Vec::with_capacity(raw_results.len());
+
     for result in raw_results {
         let file_path = index.file_id_to_path[result.file_id as usize].clone();
 
@@ -143,6 +154,10 @@ pub async fn search(
                 first_match,
                 last_match: last,
             });
+        }
+
+        if hits.len() >= 10 {
+            break;
         }
     }
 

@@ -1,31 +1,31 @@
+use std::time::Instant;
+
 use anyhow::anyhow;
-use fst::IntoStreamer;
-use fst::Set;
 use log::debug;
-use lru::LruCache;
-use regex_automata::dense;
+use log::info;
+use log::trace;
 use regex_syntax::hir::Hir;
 use regex_syntax::hir::HirKind;
 use roaring::RoaringBitmap;
-use trigram_hash::trigram_hash::TrigramKey;
 use trigram_hash::trigram_hash::split_lines_to_token_set;
 
-use crate::index::document::Document;
 use crate::index::git_index::GitIndex;
 use crate::index::git_indexer::FileId;
+use crate::search::core::search_docs::find_all_words_containing_key;
+use crate::search::core::search_docs::find_matching_commit_histories_in_doc;
+use crate::search::core::search_docs::find_matching_commit_histories_in_doc_from_trigrams;
+use crate::search::core::search_docs::find_matching_trigram;
 use crate::search::permutation::PermutationIterator;
 use crate::util::bitmap::utils::intersect_bitmap_vec;
 use crate::util::bitmap::utils::intersect_bitmaps;
 use crate::util::bitmap::utils::union_bitmaps;
 
-use super::regex_search::RegexOrString;
 use super::regex_search::RegexSearchCandidates;
 use super::regex_search::SearchPartTrigram;
 use super::regex_search::Trigram;
 
 pub struct GitSearcher<'i> {
     index: &'i GitIndex,
-    word_to_docs_cache: LruCache<String, Option<(String, RoaringBitmap)>>,
 }
 
 #[derive(Default)]
@@ -35,16 +35,11 @@ pub struct SearchOption {
 
 impl<'i> GitSearcher<'i> {
     pub fn new(index: &'i GitIndex) -> Self {
-        Self {
-            index,
-            word_to_docs_cache: LruCache::new(
-                std::num::NonZeroUsize::new(4096).unwrap(),
-            ),
-        }
+        Self { index }
     }
 
     pub fn search(
-        &mut self,
+        &self,
         query: &str,
         option: Option<SearchOption>,
     ) -> Vec<RawPerFileSearchResult> {
@@ -69,7 +64,7 @@ impl<'i> GitSearcher<'i> {
     }
 
     pub fn regex_search(
-        &mut self,
+        &self,
         query: &str,
         option: Option<SearchOption>,
     ) -> Result<Vec<RawPerFileSearchResult>, String> {
@@ -77,6 +72,7 @@ impl<'i> GitSearcher<'i> {
             return Ok(vec![]);
         }
 
+        let parse_start = Instant::now();
         let hir = regex_syntax::parse(query);
         if hir.is_err() {
             return Err(format!(
@@ -92,13 +88,15 @@ impl<'i> GitSearcher<'i> {
             .build_candidates_from_hir(&hir)
             .map_err(|e| format!("Error building candidates {e:?}"))?;
 
-        debug!("Candiates: {candidates:?}");
+        trace!("Candiates: {candidates:?}");
+
+        let candidate_build_done = Instant::now();
 
         let mut search_result = vec![];
         let option = option.unwrap_or_default();
 
         for cand in candidates.candidates {
-            debug!("Checking candidate: {cand:?}");
+            trace!("Checking candidate: {cand:?}");
 
             let trigrams = cand.trigrams;
 
@@ -145,7 +143,7 @@ impl<'i> GitSearcher<'i> {
             }
 
             let candidate_docs = intersect_bitmap_vec(docs_bitmaps).unwrap();
-            debug!("Found candidate docs: {candidate_docs:?}");
+            trace!("Found candidate docs: {candidate_docs:?}");
 
             for doc_id in candidate_docs {
                 let doc =
@@ -156,8 +154,8 @@ impl<'i> GitSearcher<'i> {
                 }
 
                 // Find the matching commit histories.
-                let matching_history = self
-                    .find_matching_commit_histories_in_doc_from_trigrams(
+                let matching_history =
+                    find_matching_commit_histories_in_doc_from_trigrams(
                         doc.as_ref().unwrap(),
                         &trigrams,
                     )
@@ -179,11 +177,20 @@ impl<'i> GitSearcher<'i> {
             }
         }
 
+        let raw_query_result_done = Instant::now();
+        info!(
+            "Candidate build: {}ms, Raw query result: {}ms",
+            candidate_build_done.duration_since(parse_start).as_millis(),
+            raw_query_result_done
+                .duration_since(candidate_build_done)
+                .as_millis()
+        );
+
         Ok(search_result)
     }
 
     fn build_candidates_from_hir(
-        &mut self,
+        &self,
         hir: &Hir,
     ) -> anyhow::Result<RegexSearchCandidates> {
         match hir.kind() {
@@ -240,13 +247,9 @@ impl<'i> GitSearcher<'i> {
     }
 
     fn get_document_bitmap_containing_word(
-        &mut self,
+        &self,
         word: &str,
     ) -> Option<(String, RoaringBitmap)> {
-        if let Some(docs) = self.word_to_docs_cache.get(word) {
-            return docs.clone();
-        }
-
         let w = word.to_owned();
 
         if word.len() <= 2 {
@@ -261,10 +264,6 @@ impl<'i> GitSearcher<'i> {
                     .collect::<Vec<_>>();
 
             let overlaps = union_bitmaps(&docs).unwrap();
-
-            self.word_to_docs_cache
-                .put(w.clone(), Some((w.clone(), overlaps.clone())));
-
             return Some((w, overlaps));
         }
 
@@ -281,17 +280,12 @@ impl<'i> GitSearcher<'i> {
             return None;
         }
 
-        self.word_to_docs_cache.put(
-            w.clone(),
-            Some((w.clone(), intersect_bitmaps(bitmaps.as_slice()).unwrap())),
-        );
-
         Some((w, intersect_bitmaps(bitmaps.as_slice()).unwrap()))
     }
 
     fn find_overlapping_document(
         &self,
-        bitmaps: &'i Vec<(String, RoaringBitmap)>,
+        bitmaps: &[(String, RoaringBitmap)],
         option: Option<SearchOption>,
     ) -> Vec<RawPerFileSearchResult> {
         let mut result = vec![];
@@ -313,7 +307,7 @@ impl<'i> GitSearcher<'i> {
             let commit_histories_per_word = bitmaps
                 .iter()
                 .map(|(word, _)| {
-                    self.find_matching_commit_histories_in_doc(document, word)
+                    find_matching_commit_histories_in_doc(document, word)
                 })
                 .collect::<Vec<_>>();
 
@@ -366,88 +360,6 @@ impl<'i> GitSearcher<'i> {
 
         result
     }
-
-    fn find_matching_commit_histories_in_doc(
-        &self,
-        doc: &Document,
-        word: &str,
-    ) -> Vec<(String, RoaringBitmap)> {
-        if word.len() < 3 {
-            let words_to_find = find_all_words_containing_key(
-                word,
-                doc.all_words.as_ref().unwrap(),
-            );
-
-            let bitmap = intersect_bitmaps(
-                &words_to_find
-                    .into_iter()
-                    .filter_map(|w| {
-                        doc.words
-                            .get(&w.into())
-                            .map(|index| &index.commit_inclutivity)
-                    })
-                    .collect::<Vec<_>>(),
-            );
-
-            return vec![(word.to_string(), bitmap.unwrap())];
-        }
-
-        let lines = vec![word.to_owned()];
-        let trigrams = split_lines_to_token_set(&lines);
-
-        let mut commit_bitmaps = vec![];
-        for w in trigrams {
-            if let Some(b) = doc.words.get(&w) {
-                commit_bitmaps.push(&b.commit_inclutivity);
-            } else {
-                return vec![];
-            }
-        }
-
-        vec![(word.to_owned(), intersect_bitmaps(&commit_bitmaps).unwrap())]
-    }
-
-    fn find_matching_commit_histories_in_doc_from_trigrams(
-        &self,
-        doc: &Document,
-        trigrams: &[Trigram],
-    ) -> anyhow::Result<Option<RoaringBitmap>> {
-        if trigrams.is_empty() {
-            return Ok(None);
-        }
-
-        let mut commit_bitmaps = vec![doc.doc_modified_commits.clone()];
-
-        for trigram in trigrams {
-            if doc.all_words.is_none() {
-                return Ok(None);
-            }
-
-            let matching_trigram = find_matching_trigram(
-                trigram,
-                doc.all_words.as_ref().unwrap(),
-            )?;
-
-            debug!("Matching trigrams : {matching_trigram:?}");
-
-            let commit_histories_that_contains_word = matching_trigram
-                .iter()
-                .filter_map(|t| doc.words.get(t).map(|i| &i.commit_inclutivity))
-                .collect::<Vec<_>>();
-
-            if commit_histories_that_contains_word.is_empty() {
-                return Ok(None);
-            }
-
-            commit_bitmaps.push(
-                union_bitmaps(&commit_histories_that_contains_word).unwrap(),
-            );
-
-            debug!("Commit bitmaps: {:?}", commit_bitmaps.last());
-        }
-
-        Ok(intersect_bitmap_vec(commit_bitmaps))
-    }
 }
 
 #[derive(Debug)]
@@ -462,41 +374,3 @@ pub struct RawPerFileSearchResult {
     pub file_id: u32,
     pub overlapped_commits: RoaringBitmap,
 }
-
-fn find_all_words_containing_key(
-    key: &str,
-    all_words: &Set<Vec<u8>>,
-) -> Vec<String> {
-    let escaped_word = regex::escape(key);
-    let pattern = match key.len() {
-        2 => format!("{escaped_word}.|.{escaped_word}"),
-        1 => format!("{escaped_word}..|.{escaped_word}.|..{escaped_word}"),
-        _ => panic!("Should not happen {key}"),
-    };
-
-    let dfa = dense::Builder::new().build(&pattern).unwrap();
-    all_words.search(dfa).into_stream().into_strs().unwrap()
-}
-
-fn find_matching_trigram(
-    key: &Trigram,
-    all_words: &Set<Vec<u8>>,
-) -> anyhow::Result<Vec<TrigramKey>> {
-    let matching_regex_or_string = key.create_matching_regex_or_string();
-    match matching_regex_or_string {
-        RegexOrString::String(s) => Ok(vec![s.into()]),
-        RegexOrString::Regex(r) => {
-            let dfa = dense::Builder::new().build(&r)?;
-            Ok(all_words
-                .search(dfa)
-                .into_stream()
-                .into_strs()?
-                .into_iter()
-                .map(|f| TrigramKey::from_utf8(&f))
-                .collect())
-        }
-    }
-}
-
-#[cfg(test)]
-mod regex_build_hir {}
