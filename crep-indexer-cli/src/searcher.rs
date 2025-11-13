@@ -119,6 +119,10 @@ impl<'a> Searcher<'a> {
                 last,
             });
 
+            if search_results.len() >= 10 {
+                break;
+            }
+
             raw_result_times.push(Instant::now());
         }
 
