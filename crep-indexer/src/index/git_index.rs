@@ -26,6 +26,9 @@ pub struct GitIndex {
     pub file_id_to_document: AHashMap<FileId, Document>,
     pub word_to_file_id_ever_contained: AHashMap<TrigramKey, RoaringBitmap>,
 
+    // Files that are not deleted at HEAD.
+    pub not_deleted_files_head: RoaringBitmap,
+
     #[serde(with = "crate::util::serde::fst::fst_set_to_vec")]
     pub all_words: Set<Vec<u8>>,
 }
@@ -41,6 +44,15 @@ impl GitIndex {
         keys.sort();
 
         let all_words = Set::from_iter(keys).unwrap();
+        let not_deleted_files_head = RoaringBitmap::from_iter(
+            indexer.file_id_to_document.iter().filter_map(|(k, v)| {
+                if v.is_deleted {
+                    return None;
+                }
+
+                Some(*k as u32)
+            }),
+        );
 
         Self {
             commit_index_to_commit_id: indexer.commit_index_to_commit_id,
@@ -50,6 +62,7 @@ impl GitIndex {
             word_to_file_id_ever_contained: indexer
                 .word_to_file_id_ever_contained,
             all_words,
+            not_deleted_files_head,
         }
     }
 
@@ -125,6 +138,8 @@ mod tests {
             file_id_to_document: AHashMap::from_iter(vec![(1, document_a)]),
             word_to_file_id_ever_contained: AHashMap::new(),
             all_words: Set::from_iter(["a", "ab", "abc"].iter()).unwrap(),
+            not_deleted_files_head: RoaringBitmap::from_sorted_iter(0..2)
+                .unwrap(),
         };
 
         let encoded = serde::encode_to_vec(index, bincode::config::standard());

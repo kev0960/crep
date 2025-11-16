@@ -33,6 +33,8 @@ pub struct Document {
     pub all_words: Option<Set<Vec<u8>>>,
 
     pub doc_modified_commits: RoaringBitmap,
+
+    pub is_deleted: bool,
 }
 
 impl Document {
@@ -41,6 +43,7 @@ impl Document {
             words: AHashMap::new(),
             all_words: None,
             doc_modified_commits: RoaringBitmap::new(),
+            is_deleted: false,
         }
     }
 
@@ -102,6 +105,7 @@ impl Document {
         }
 
         self.doc_modified_commits.insert(commit_index as u32);
+        self.is_deleted = true
     }
 
     fn update_commit_inclutivity_after_removal(
@@ -171,6 +175,10 @@ impl PartialEq for Document {
             return false;
         }
 
+        if self.is_deleted != other.is_deleted {
+            return false;
+        }
+
         match (&self.all_words, &other.all_words) {
             (Some(left), Some(right)) => {
                 left.stream().into_strs().unwrap()
@@ -236,7 +244,8 @@ mod document_test {
                     )
                 ]),
                 all_words: None,
-                doc_modified_commits: RoaringBitmap::from([1])
+                doc_modified_commits: RoaringBitmap::from([1]),
+                is_deleted: false
             }
         );
     }
@@ -279,6 +288,7 @@ mod document_test {
                     Set::from_iter(vec!["bye", "hel", "llo"]).unwrap(),
                 ),
                 doc_modified_commits: RoaringBitmap::from_iter([1, 3, 5, 8]),
+                is_deleted: false,
             };
 
         let encoded =

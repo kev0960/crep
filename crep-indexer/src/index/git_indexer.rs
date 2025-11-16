@@ -294,7 +294,9 @@ impl GitIndexer {
                             });
                         }
                     }
-                    _ => {}
+                    _ => {
+                        panic!("Unknown {:?}", delta)
+                    }
                 }
 
                 true
@@ -839,7 +841,8 @@ mod index_tree {
                     all_words: Some(
                         fst::Set::from_iter(["a", "bc", "def", "efa"]).unwrap()
                     ),
-                    doc_modified_commits: RoaringBitmap::from_iter([0])
+                    doc_modified_commits: RoaringBitmap::from_iter([0]),
+                    is_deleted: false
                 }
             )])
         );
@@ -941,7 +944,8 @@ mod index_tree {
                         all_words: Some(
                             fst::Set::from_iter(["abc", "bcd"]).unwrap()
                         ),
-                        doc_modified_commits: RoaringBitmap::from_iter([0])
+                        doc_modified_commits: RoaringBitmap::from_iter([0]),
+                        is_deleted: false
                     }
                 ),
                 (
@@ -958,7 +962,8 @@ mod index_tree {
                             }
                         ),]),
                         all_words: Some(fst::Set::from_iter(["123"]).unwrap()),
-                        doc_modified_commits: RoaringBitmap::from_iter([1])
+                        doc_modified_commits: RoaringBitmap::from_iter([1]),
+                        is_deleted: false
                     }
                 )
             ])
@@ -1085,7 +1090,8 @@ mod index_tree {
                         fst::Set::from_iter(["1", "2", "3", "abc", "bcd"])
                             .unwrap()
                     ),
-                    doc_modified_commits: RoaringBitmap::from_iter([0, 1])
+                    doc_modified_commits: RoaringBitmap::from_iter([0, 1]),
+                    is_deleted: false
                 }
             ),])
         );
@@ -1169,7 +1175,8 @@ mod index_tree {
                     all_words: Some(
                         fst::Set::from_iter(["1", "2", "3"]).unwrap()
                     ),
-                    doc_modified_commits: RoaringBitmap::from_iter([0, 1, 2])
+                    doc_modified_commits: RoaringBitmap::from_iter([0, 1, 2]),
+                    is_deleted: true
                 }
             ),])
         );
@@ -1183,6 +1190,152 @@ mod index_tree {
                     commit_indexes: vec![]
                 }
             ),])
+        )
+    }
+
+    #[test]
+    fn rename_file_test() {
+        let mut indexer = GitIndexer::new(GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: false,
+        });
+
+        let repo = init_repo();
+        let repo_path = repo.path();
+
+        std::fs::write(repo_path.join("file.txt"), "1\n2\n3\n").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "init"]);
+
+        run(repo_path, &["git", "mv", "file.txt", "file2.txt"]);
+        run(repo_path, &["git", "commit", "-m", "second"]);
+
+        let repo = Repository::open(repo_path).unwrap();
+        indexer.index_history(repo).unwrap();
+
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 2);
+        assert_eq!(
+            indexer.file_name_to_id,
+            AHashMap::from_iter([
+                ("file.txt".to_owned(), 0),
+                ("file2.txt".to_owned(), 1),
+            ])
+        );
+        assert_eq!(
+            indexer.file_id_to_path,
+            vec!["file.txt".to_owned(), "file2.txt".to_owned()]
+        );
+
+        // Rename is treated as file remove and add.
+        let first = RoaringBitmap::from_sorted_iter(0..1).unwrap();
+        let second = RoaringBitmap::from_sorted_iter(1..2).unwrap();
+
+        pretty_assertions::assert_eq!(
+            indexer.file_id_to_document,
+            AHashMap::from([
+                (
+                    0,
+                    Document {
+                        words: AHashMap::from([
+                            (
+                                "1".into(),
+                                WordIndex {
+                                    word_history: AHashSet::new(),
+                                    commit_inclutivity: first.clone()
+                                }
+                            ),
+                            (
+                                "2".into(),
+                                WordIndex {
+                                    word_history: AHashSet::new(),
+                                    commit_inclutivity: first.clone()
+                                }
+                            ),
+                            (
+                                "3".into(),
+                                WordIndex {
+                                    word_history: AHashSet::new(),
+                                    commit_inclutivity: first.clone()
+                                }
+                            ),
+                        ]),
+                        all_words: Some(
+                            fst::Set::from_iter(["1", "2", "3"]).unwrap()
+                        ),
+                        doc_modified_commits: RoaringBitmap::from_iter([0, 1]),
+                        is_deleted: true
+                    }
+                ),
+                (
+                    1,
+                    Document {
+                        words: AHashMap::from([
+                            (
+                                "1".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 1,
+                                            line: 0
+                                        }
+                                    ]),
+                                    commit_inclutivity: second.clone()
+                                }
+                            ),
+                            (
+                                "2".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 1,
+                                            line: 1
+                                        }
+                                    ]),
+                                    commit_inclutivity: second.clone()
+                                }
+                            ),
+                            (
+                                "3".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 1,
+                                            line: 2
+                                        }
+                                    ]),
+                                    commit_inclutivity: second.clone()
+                                }
+                            ),
+                        ]),
+                        all_words: Some(
+                            fst::Set::from_iter(["1", "2", "3"]).unwrap()
+                        ),
+                        doc_modified_commits: RoaringBitmap::from_iter([1]),
+                        is_deleted: false
+                    }
+                )
+            ])
+        );
+
+        pretty_assertions::assert_eq!(
+            indexer.file_id_to_diff_tracker,
+            AHashMap::from([
+                (
+                    0,
+                    FileDiffTracker {
+                        commit_line_end: vec![],
+                        commit_indexes: vec![]
+                    }
+                ),
+                (
+                    1,
+                    FileDiffTracker {
+                        commit_line_end: vec![3],
+                        commit_indexes: vec![(1, 0)]
+                    }
+                ),
+            ])
         )
     }
 
@@ -1274,7 +1427,8 @@ mod index_tree {
                         all_words: Some(
                             fst::Set::from_iter(["a", "c"]).unwrap()
                         ),
-                        doc_modified_commits: RoaringBitmap::from_iter([0, 2])
+                        doc_modified_commits: RoaringBitmap::from_iter([0, 2]),
+                        is_deleted: false
                     }
                 ),
                 (
@@ -1293,7 +1447,8 @@ mod index_tree {
                             }
                         )]),
                         all_words: Some(fst::Set::from_iter(["x"]).unwrap()),
-                        doc_modified_commits: RoaringBitmap::from_iter([1])
+                        doc_modified_commits: RoaringBitmap::from_iter([1]),
+                        is_deleted: false
                     }
                 )
             ])
@@ -1323,6 +1478,115 @@ mod index_tree {
                     FileDiffTracker {
                         commit_line_end: vec![1],
                         commit_indexes: vec![(1, 0)]
+                    }
+                )
+            ])
+        );
+    }
+
+    #[test]
+    fn finalize_properly() {
+        let mut indexer = GitIndexer::new(GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: false,
+        });
+
+        let repo = init_repo();
+        let repo_path = repo.path();
+
+        std::fs::write(repo_path.join("file.txt"), "1").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "init"]);
+
+        std::fs::write(repo_path.join("file2.txt"), "2").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "second"]);
+
+        std::fs::write(repo_path.join("file3.txt"), "3").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "third"]);
+
+        let repo = Repository::open(repo_path).unwrap();
+        indexer.index_history(repo).unwrap();
+
+        assert_eq!(indexer.commit_index_to_commit_id.len(), 3);
+        assert_eq!(
+            indexer.file_name_to_id,
+            AHashMap::from_iter([
+                ("file.txt".to_owned(), 0),
+                ("file2.txt".to_owned(), 1),
+                ("file3.txt".to_owned(), 2),
+            ])
+        );
+        assert_eq!(
+            indexer.file_id_to_path,
+            vec![
+                "file.txt".to_owned(),
+                "file2.txt".to_owned(),
+                "file3.txt".to_owned(),
+            ]
+        );
+
+        let all = RoaringBitmap::from_sorted_iter(0..3).unwrap();
+        let last_two = RoaringBitmap::from_sorted_iter(1..3).unwrap();
+        let last_one = RoaringBitmap::from_sorted_iter(2..3).unwrap();
+
+        pretty_assertions::assert_eq!(
+            indexer.file_id_to_document,
+            AHashMap::from([
+                (
+                    0,
+                    Document {
+                        words: AHashMap::from([(
+                            "1".into(),
+                            WordIndex {
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 0,
+                                    line: 0
+                                },]),
+                                commit_inclutivity: all.clone()
+                            }
+                        ),]),
+                        all_words: Some(fst::Set::from_iter(["1"]).unwrap()),
+                        doc_modified_commits: RoaringBitmap::from_iter([0]),
+                        is_deleted: false
+                    }
+                ),
+                (
+                    1,
+                    Document {
+                        words: AHashMap::from([(
+                            "2".into(),
+                            WordIndex {
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 1,
+                                    line: 0
+                                },]),
+                                commit_inclutivity: last_two.clone()
+                            }
+                        ),]),
+                        all_words: Some(fst::Set::from_iter(["2"]).unwrap()),
+                        doc_modified_commits: RoaringBitmap::from_iter([1]),
+                        is_deleted: false
+                    }
+                ),
+                (
+                    2,
+                    Document {
+                        words: AHashMap::from([(
+                            "3".into(),
+                            WordIndex {
+                                word_history: AHashSet::from_iter([WordKey {
+                                    commit_id: 2,
+                                    line: 0
+                                },]),
+                                commit_inclutivity: last_one.clone()
+                            }
+                        ),]),
+                        all_words: Some(fst::Set::from_iter(["3"]).unwrap()),
+                        doc_modified_commits: RoaringBitmap::from_iter([2]),
+                        is_deleted: false
                     }
                 )
             ])

@@ -319,11 +319,28 @@ impl<'i> GitSearcher<'i> {
                     .collect::<Vec<u32>>(),
             );
 
+            let mut with_head: Option<RoaringBitmap> = None;
+            let doc_modified_commits = match document.is_deleted {
+                true => &document.doc_modified_commits,
+                false => {
+                    // If the document was not deleted, then we should also check the HEAD commit.
+                    with_head = Some(document.doc_modified_commits.clone());
+                    with_head.as_mut().unwrap().insert(
+                        self.index.commit_index_to_commit_id.len() as u32 - 1,
+                    );
+                    with_head.as_ref().unwrap()
+                }
+            };
+
             for permutation in permutations {
                 debug!("Permutations {permutation:?}");
 
                 let mut selected_words = vec![];
-                let mut selected_bitmaps = vec![&document.doc_modified_commits];
+                let mut selected_bitmaps = vec![doc_modified_commits];
+
+                if !document.is_deleted {
+                    // If the document is live at HEAD, then we have
+                }
 
                 for (index, perm_idx) in permutation.iter().enumerate() {
                     selected_words.push(

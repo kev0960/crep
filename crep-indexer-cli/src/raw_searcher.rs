@@ -26,9 +26,17 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
 
             match &result.last {
                 Some(last) => {
+                    let first_commit_info =
+                        searcher.get_commit_info(result.first.commit_id)?;
+                    let last_commit_info =
+                        searcher.get_commit_info(last.commit_id)?;
+
                     lines.push(format!(
-                        "First seen at commit {} ... last seen at {}",
-                        result.first.commit_id, last.commit_id
+                        "First seen at commit {} ({}) ... last seen at {} ({})",
+                        &first_commit_info.commit_id[0..8],
+                        first_commit_info.commit_time.format("%Y-%m-%dT%H:%M"),
+                        &last_commit_info.commit_id[0..8],
+                        last_commit_info.commit_time.format("%Y-%m-%dT%H:%M")
                     ));
 
                     lines.extend_from_slice(&convert_search_result_to_lines(
@@ -44,9 +52,12 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
                     ));
                 }
                 None => {
+                    let first_commit_info =
+                        searcher.get_commit_info(result.first.commit_id)?;
                     lines.push(format!(
-                        "Seen at commit {}",
-                        result.first.commit_id
+                        "Seen at commit {} ({}), never seen afterwards",
+                        &first_commit_info.commit_id[0..8],
+                        first_commit_info.commit_time.format("%Y-%m-%dT%H:%M"),
                     ));
                     lines.extend_from_slice(&convert_search_result_to_lines(
                         &result.first,

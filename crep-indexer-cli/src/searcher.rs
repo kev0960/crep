@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::Instant;
 
+use chrono::{DateTime, TimeZone, Utc};
 use crep_indexer::index::git_index::GitIndex;
 use crep_indexer::search::git_searcher::GitSearcher;
 use crep_indexer::search::git_searcher::RawPerFileSearchResult;
@@ -131,6 +132,23 @@ impl<'a> Searcher<'a> {
         Ok(search_results)
     }
 
+    pub fn get_commit_info(
+        &self,
+        commit_index: usize,
+    ) -> anyhow::Result<CommitInfo> {
+        let commit_id = Oid::from_bytes(
+            &self.index.commit_index_to_commit_id[commit_index],
+        )?;
+
+        let commit = self.repo.find_commit(commit_id)?;
+
+        Ok(CommitInfo {
+            commit_id: commit_id.to_string(),
+            commit_time: DateTime::from_timestamp_secs(commit.time().seconds())
+                .ok_or_else(|| anyhow::anyhow!("invalid commit timestamp"))?,
+        })
+    }
+
     fn get_search_result_at_commit(
         &self,
         commit_id: u32,
@@ -174,6 +192,11 @@ impl<'a> Searcher<'a> {
             anyhow::bail!("Path is not a blob file {file_path}");
         }
     }
+}
+
+pub struct CommitInfo {
+    pub commit_id: String,
+    pub commit_time: DateTime<Utc>,
 }
 
 fn show_raw_result_timing(timings: &[Instant]) {
