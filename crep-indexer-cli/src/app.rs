@@ -308,11 +308,20 @@ impl<'a> App<'a> {
                 result.first.file_name
             ))]));
 
+            let searcher = self.searcher.lock().unwrap();
+
+            let first_commit =
+                searcher.get_commit_info(result.first.commit_id).unwrap();
+
             match &result.last {
                 Some(last) => {
+                    let last_commit =
+                        searcher.get_commit_info(last.commit_id).unwrap();
+
                     lines.push(Line::from(vec![Span::raw(format!(
                         "First seen at commit {} ... last seen at {}",
-                        result.first.commit_id, last.commit_id
+                        first_commit.display_simple(),
+                        last_commit.display_simple(),
                     ))]));
 
                     lines.extend_from_slice(&convert_search_result_to_lines(
@@ -329,8 +338,8 @@ impl<'a> App<'a> {
                 }
                 None => {
                     lines.push(Line::from(vec![Span::raw(format!(
-                        "Seen at commit {}",
-                        result.first.commit_id
+                        "Seen at commit {} and never seen again",
+                        first_commit.display_simple()
                     ))]));
                     lines.extend_from_slice(&convert_search_result_to_lines(
                         &result.first,
