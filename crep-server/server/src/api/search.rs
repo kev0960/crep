@@ -20,17 +20,12 @@ use utoipa::ToSchema;
 
 use crate::server_context::ServerContext;
 
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, Copy)]
+#[derive(Default, Debug, Serialize, Deserialize, ToSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchMode {
+    #[default]
     Plain,
     Regex,
-}
-
-impl Default for SearchMode {
-    fn default() -> Self {
-        Self::Plain
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -117,9 +112,9 @@ pub async fn search(
         return Err(ApiError::bad_request("query must not be empty"));
     }
 
-    let index = &context.index.lock().unwrap();
+    let index = &context.index;
 
-    let mut searcher = GitSearcher::new(index);
+    let searcher = GitSearcher::new(index);
     let option = Some(SearchOption {
         max_num_to_find: request.limit,
     });
@@ -141,7 +136,6 @@ pub async fn search(
     let repo = context.repo.lock().unwrap();
 
     let mut hits = Vec::with_capacity(raw_results.len());
-
     for result in raw_results {
         let file_path = index.file_id_to_path[result.file_id as usize].clone();
 

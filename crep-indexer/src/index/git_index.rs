@@ -1,11 +1,14 @@
 use std::fs::File;
-use std::io::BufReader;
+use std::io;
 use std::io::BufWriter;
+use std::io::Read;
 use std::path::Path;
 
 use ahash::AHashMap;
 use bincode::serde as bserde;
 use fst::Set;
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
 use roaring::RoaringBitmap;
 use serde::Deserialize;
 use serde::Serialize;
@@ -81,8 +84,18 @@ impl GitIndex {
 
     pub fn load(file_path: &Path) -> anyhow::Result<Self> {
         let file = File::open(file_path)?;
+        let file_size = file.metadata()?.len();
 
-        let mut reader = BufReader::new(file);
+        let progress = ProgressBar::new(file_size);
+        progress.set_style(ProgressStyle::default_bar().template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:60.cyan/blue}] {percent}%   {decimal_bytes:>7}/{decimal_total_bytes:7} {msg}"
+                ).unwrap());
+
+        let mut reader = ProgressFileReader {
+            file,
+            progress,
+            bytes_read: 0,
+        };
 
         let decoded = bserde::decode_from_std_read(
             &mut reader,
@@ -90,6 +103,22 @@ impl GitIndex {
         )?;
 
         Ok(decoded)
+    }
+}
+
+struct ProgressFileReader {
+    file: File,
+    progress: ProgressBar,
+    bytes_read: usize,
+}
+
+impl Read for ProgressFileReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.file.read(buf)?;
+        self.bytes_read += n;
+        self.progress.set_position(self.bytes_read as u64);
+
+        Ok(n)
     }
 }
 

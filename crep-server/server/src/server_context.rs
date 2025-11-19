@@ -9,7 +9,7 @@ use crate::config::ServerConfig;
 
 #[derive(Clone)]
 pub struct ServerContext {
-    pub index: Arc<Mutex<GitIndex>>,
+    pub index: Arc<GitIndex>,
     pub repo: Arc<Mutex<Repository>>,
 }
 
@@ -19,7 +19,7 @@ impl ServerContext {
         let repo = Repository::open(&config.repo_path).unwrap();
 
         Ok(Self {
-            index: Arc::new(Mutex::new(index)),
+            index: Arc::new(index),
             repo: Arc::new(Mutex::new(repo)),
         })
     }
