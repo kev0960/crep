@@ -12,6 +12,7 @@ name = "openapi-export"
 path = "src/bin/openapi_export.rs"
 
 [dependencies]
+ahash = { workspace = true }
 anyhow = { workspace = true }
 axum = { version = "0.8", features = ["macros"] }
 clap = { version = "4.5", features = ["derive"] }
@@ -26,3 +27,4 @@ crep-indexer = { path = "../../crep-indexer" }
 git2 = { workspace = true }
 hex = "0.4"
 utoipa = { version = "5.0", features = ["axum_extras", "macros"] }
+lru = "0.16.2"

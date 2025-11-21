@@ -4,14 +4,14 @@ use std::collections::HashSet;
 
 use aho_corasick::AhoCorasick;
 use regex::Regex;
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::index::git_indexer::CommitIndex;
+use crate::search::git_searcher::Query;
 
-use super::git_searcher::Query;
-
-#[derive(Debug)]
-pub struct SearchResult {
-    pub file_name: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SingleCommitSearchResult {
     pub commit_id: CommitIndex,
     pub words_per_line: BTreeMap<usize, Vec<(String, usize)>>,
     pub lines: BTreeMap<usize, String>,
@@ -23,11 +23,10 @@ pub struct MatchingWordPos {
     pub col: usize,
 }
 
-impl SearchResult {
+impl SingleCommitSearchResult {
     pub fn new(
         query: &Query,
         commit_id: CommitIndex,
-        file_name: &str,
         file_content: &[&str],
     ) -> anyhow::Result<Option<Self>> {
         let matches = match query {
@@ -79,8 +78,7 @@ impl SearchResult {
             .map(|line_num| (line_num, file_content[line_num].to_owned()))
             .collect::<BTreeMap<usize, String>>();
 
-        Ok(Some(SearchResult {
-            file_name: file_name.to_owned(),
+        Ok(Some(SingleCommitSearchResult {
             commit_id,
             words_per_line,
             lines,
@@ -116,7 +114,7 @@ impl SearchResult {
 
         Ok(word_pos_found
             .into_iter()
-            .map(|(k, v)| return (words[k].as_str(), v))
+            .map(|(k, v)| (words[k].as_str(), v))
             .collect())
     }
 

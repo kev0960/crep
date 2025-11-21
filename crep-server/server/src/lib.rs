@@ -6,6 +6,7 @@ use axum::routing::post;
 
 pub mod api;
 pub mod config;
+mod search;
 pub mod server_context;
 
 pub fn router(state: ServerContext) -> Router {

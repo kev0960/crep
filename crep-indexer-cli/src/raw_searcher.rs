@@ -1,5 +1,5 @@
 use color_eyre::owo_colors::OwoColorize;
-use crep_indexer::search::search_result::SearchResult;
+use crep_indexer::search::result::single_commit_search_result::SingleCommitSearchResult;
 
 use crate::searcher::Query;
 use crate::searcher::Searcher;
@@ -22,12 +22,12 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
                 break;
             }
 
-            lines.push(format!("File: {}", result.first.file_name));
+            lines.push(format!("File: {}", result.file_path));
 
-            match &result.last {
+            match &result.last_match {
                 Some(last) => {
-                    let first_commit_info =
-                        searcher.get_commit_info(result.first.commit_id)?;
+                    let first_commit_info = searcher
+                        .get_commit_info(result.first_match.commit_id)?;
                     let last_commit_info =
                         searcher.get_commit_info(last.commit_id)?;
 
@@ -38,7 +38,7 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
                     ));
 
                     lines.extend_from_slice(&convert_search_result_to_lines(
-                        &result.first,
+                        &result.first_match,
                     ));
                     lines.extend_from_slice(&[
                         "".to_owned(),
@@ -50,14 +50,14 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
                     ));
                 }
                 None => {
-                    let first_commit_info =
-                        searcher.get_commit_info(result.first.commit_id)?;
+                    let first_commit_info = searcher
+                        .get_commit_info(result.first_match.commit_id)?;
                     lines.push(format!(
                         "Seen at commit {}, never seen afterwards",
                         first_commit_info.display_simple(),
                     ));
                     lines.extend_from_slice(&convert_search_result_to_lines(
-                        &result.first,
+                        &result.first_match,
                     ));
                 }
             };
@@ -69,7 +69,9 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
     }
 }
 
-fn convert_search_result_to_lines(result: &SearchResult) -> Vec<String> {
+fn convert_search_result_to_lines(
+    result: &SingleCommitSearchResult,
+) -> Vec<String> {
     let mut lines = vec![];
     for (line_num, line) in &result.lines {
         let words = result.words_per_line.get(line_num);

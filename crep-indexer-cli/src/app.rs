@@ -3,7 +3,8 @@ use std::sync::mpsc::channel;
 
 use chrono::DateTime;
 use chrono::Local;
-use crep_indexer::search::search_result::SearchResult;
+use crep_indexer::search::result::search_result::SearchResult;
+use crep_indexer::search::result::single_commit_search_result::SingleCommitSearchResult;
 use ratatui::DefaultTerminal;
 use ratatui::Frame;
 use ratatui::crossterm::event::Event;
@@ -27,7 +28,6 @@ use std::sync::mpsc;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
 
-use crate::searcher::FirstAndLastFound;
 use crate::searcher::Query;
 use crate::searcher::Searcher;
 
@@ -55,14 +55,14 @@ pub struct App<'a> {
     search_send: mpsc::Sender<SearchMessage>,
     search_recv: Option<mpsc::Receiver<SearchMessage>>,
 
-    search_result: Vec<FirstAndLastFound>,
+    search_result: Vec<SearchResult>,
     log: Vec<(DateTime<Local>, String)>,
 }
 
 #[derive(Debug)]
 enum Message {
     Event(Event),
-    SearchResults(Vec<FirstAndLastFound>),
+    SearchResults(Vec<SearchResult>),
     Terminate,
     Log(String),
 }
@@ -299,21 +299,22 @@ impl<'a> App<'a> {
         &self,
         frame: &mut Frame,
         area: Rect,
-        results: &[FirstAndLastFound],
+        results: &[SearchResult],
     ) {
         let mut lines = vec![];
         for result in results {
             lines.push(Line::from(vec![Span::raw(format!(
                 "File: {}",
-                result.first.file_name
+                result.file_path
             ))]));
 
             let searcher = self.searcher.lock().unwrap();
 
-            let first_commit =
-                searcher.get_commit_info(result.first.commit_id).unwrap();
+            let first_commit = searcher
+                .get_commit_info(result.first_match.commit_id)
+                .unwrap();
 
-            match &result.last {
+            match &result.last_match {
                 Some(last) => {
                     let last_commit =
                         searcher.get_commit_info(last.commit_id).unwrap();
@@ -325,7 +326,7 @@ impl<'a> App<'a> {
                     ))]));
 
                     lines.extend_from_slice(&convert_search_result_to_lines(
-                        &result.first,
+                        &result.first_match,
                     ));
                     lines.extend_from_slice(&[
                         Line::from(""),
@@ -342,7 +343,7 @@ impl<'a> App<'a> {
                         first_commit.display_simple()
                     ))]));
                     lines.extend_from_slice(&convert_search_result_to_lines(
-                        &result.first,
+                        &result.first_match,
                     ));
                 }
             };
@@ -419,7 +420,9 @@ fn get_highlighted_line<'a>(
     Line::from(result)
 }
 
-fn convert_search_result_to_lines(result: &SearchResult) -> Vec<Line> {
+fn convert_search_result_to_lines(
+    result: &SingleCommitSearchResult,
+) -> Vec<Line> {
     let mut lines = vec![];
     for (line_num, line) in &result.lines {
         let words = result.words_per_line.get(line_num);

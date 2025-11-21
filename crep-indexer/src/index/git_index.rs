@@ -15,13 +15,17 @@ use serde::Serialize;
 use trigram_hash::trigram_hash::TrigramKey;
 
 use super::document::Document;
+use super::git_index_serialization::GitIndexSerialization;
 use super::git_indexer::CommitIndex;
 use super::git_indexer::FileId;
 use super::git_indexer::GitIndexer;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(from = "GitIndexSerialization")]
 pub struct GitIndex {
     pub commit_index_to_commit_id: Vec<[u8; 20]>,
+
+    #[serde(skip)]
     pub commit_id_to_commit_index: AHashMap<[u8; 20], CommitIndex>,
 
     pub file_id_to_path: Vec<String>,
@@ -32,7 +36,7 @@ pub struct GitIndex {
     // Files that are not deleted at HEAD.
     pub not_deleted_files_head: RoaringBitmap,
 
-    #[serde(with = "crate::util::serde::fst::fst_set_to_vec")]
+    #[serde(skip)]
     pub all_words: Set<Vec<u8>>,
 }
 

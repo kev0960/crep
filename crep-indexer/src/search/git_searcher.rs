@@ -379,13 +379,13 @@ impl<'i> GitSearcher<'i> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Query {
     Words(Vec<String>),
     Regex(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RawPerFileSearchResult {
     pub query: Query,
     pub file_id: u32,
