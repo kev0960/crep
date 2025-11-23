@@ -422,7 +422,7 @@ fn get_highlighted_line<'a>(
 
 fn convert_search_result_to_lines(
     result: &SingleCommitSearchResult,
-) -> Vec<Line> {
+) -> Vec<Line<'_>> {
     let mut lines = vec![];
     for (line_num, line) in &result.lines {
         let words = result.words_per_line.get(line_num);

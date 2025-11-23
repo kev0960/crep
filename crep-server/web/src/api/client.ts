@@ -22,7 +22,7 @@ export async function executeSearch(
   const payload: SearchRequest = {
     query: trimmed,
     page: 0,
-    page_size: 10,
+    page_size: 100,
   };
 
   if (options.mode) {

@@ -44,6 +44,7 @@ pub struct MatchDetail {
     pub commit_sha: String,
     pub commit_date: String,
     pub commit_summary: String,
+    pub is_head: bool,
     pub lines: Vec<LineMatch>,
 }
 
@@ -63,6 +64,7 @@ impl MatchDetail {
                 .ok_or_else(|| anyhow::anyhow!("invalid commit timestamp"))?
                 .to_rfc3339(),
             commit_summary: commit.summary().unwrap_or_default().to_owned(),
+            is_head: result.commit_id == commit_index_to_commit_id.len() - 1,
             lines: LineMatch::new(&result),
         })
     }

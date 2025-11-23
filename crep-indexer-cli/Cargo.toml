@@ -16,7 +16,7 @@ hex = "0.4.3"
 log = { workspace = true }
 num-traits = "0.2.19"
 ratatui = "0.29.0"
-rayon = "1.11.0"
+rayon = { workspace = true }
 tui-input = "0.14.0"
 
 [lints]

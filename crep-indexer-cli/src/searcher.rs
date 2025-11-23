@@ -21,7 +21,6 @@ use log::info;
 use rayon::prelude::*;
 
 pub struct Searcher<'a> {
-    repo: Repository,
     pool: RepoPool,
     index: &'a GitIndex,
     searcher: GitSearcher<'a>,
@@ -46,8 +45,9 @@ impl RepoPool {
 
 impl<'a> Searcher<'a> {
     pub fn new(index: &'a GitIndex, path: &str) -> Self {
+        assert!(rayon::current_num_threads() > 0);
+
         Self {
-            repo: Repository::open(Path::new(path)).unwrap(),
             pool: RepoPool::new(rayon::current_num_threads(), path),
             index,
             searcher: GitSearcher::new(index),
@@ -125,7 +125,8 @@ impl<'a> Searcher<'a> {
             &self.index.commit_index_to_commit_id[commit_index],
         )?;
 
-        let commit = self.repo.find_commit(commit_id)?;
+        let repo = self.pool.repos.first().unwrap().lock().unwrap();
+        let commit = repo.find_commit(commit_id)?;
 
         Ok(CommitInfo {
             commit_id: commit_id.to_string(),
@@ -165,17 +166,6 @@ impl<'a> fmt::Display for SimpleCommitInfo<'a> {
             )
         }
     }
-}
-
-fn show_raw_result_timing(timings: &[Instant]) {
-    let mut gaps = vec![];
-    for i in 0..timings.len() - 1 {
-        gaps.push(timings[i + 1].duration_since(timings[i]).as_secs_f64());
-    }
-
-    let total = gaps.iter().sum::<f64>();
-    info!("Avg result : {}ms", total / (gaps.len() as f64) * 1000.);
-    info!("Total : {}ms", total * 1000.);
 }
 
 struct ThreadSafeRepoReader<'i> {

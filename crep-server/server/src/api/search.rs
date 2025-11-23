@@ -1,12 +1,20 @@
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
 use std::time::Instant;
 
 use axum::Json;
 use axum::extract::State;
+use crep_indexer::index::git_indexer::CommitIndex;
+use crep_indexer::index::git_indexer::FileId;
 use crep_indexer::search::git_searcher::GitSearcher;
 use crep_indexer::search::git_searcher::Query;
 use crep_indexer::search::git_searcher::SearchOption;
+use crep_indexer::search::result::search_result::RepoReader;
 use crep_indexer::search::result::search_result::SearchResult;
-use crep_indexer::search::result::simple_repo_reader::SimpleRepoReader;
+use git2::Oid;
+use git2::Repository;
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::info;
@@ -21,6 +29,7 @@ use crate::search::search::MatchDetail;
 use crate::search::search::SearchHit;
 use crate::search::search_cache::CacheResult;
 use crate::server_context::ServerContext;
+use rayon::prelude::*;
 
 #[derive(Default, Debug, Serialize, Deserialize, ToSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
@@ -134,10 +143,17 @@ pub async fn search(
             }
 
             raw_results.map(|mut results| {
+                if request.page * request.page_size >= results.len() {
+                    return vec![];
+                }
+
                 results
                     .drain(
                         request.page * request.page_size
-                            ..(request.page + 1) * request.page_size,
+                            ..std::cmp::min(
+                                (request.page + 1) * request.page_size,
+                                results.len(),
+                            ),
                     )
                     .collect::<Vec<_>>()
             })
@@ -151,55 +167,96 @@ pub async fn search(
         results.len()
     );
 
-    let repo = context.repo.lock().unwrap();
+    let repo_pool = context.repo_pool.clone();
+    let index_cloned = context.index.clone();
 
-    let reader = SimpleRepoReader {
-        repo: &repo,
-        file_id_to_path: &context.index.file_id_to_path,
-        commit_index_to_commit_id: &context.index.commit_index_to_commit_id,
-    };
+    let conversion_start = Instant::now();
+    let result = tokio::task::spawn_blocking(move || {
+        results
+            .into_par_iter()
+            .map_init(
+                || ThreadSafeRepoReader {
+                    repo: repo_pool
+                        .repos
+                        .get(rayon::current_thread_index().unwrap())
+                        .unwrap()
+                        .clone(),
+                    file_id_to_path: &index_cloned.file_id_to_path,
+                    commit_index_to_commit_id: &index_cloned
+                        .commit_index_to_commit_id,
+                },
+                |reader, result| match result {
+                    CacheResult::Hit(search_res) => {
+                        Ok(SearchConversionResult {
+                            result: Some(search_res),
+                            ..Default::default()
+                        })
+                    }
+                    CacheResult::Miss(raw_res) => {
+                        let conversion_start = Instant::now();
+                        SearchResult::new(reader, &raw_res)
+                            .map_err(|e| {
+                                ApiError::internal(
+                                    "Unable to parse search result",
+                                    e,
+                                )
+                            })
+                            .map(|r| SearchConversionResult {
+                                result: r,
+                                should_update_cache: true,
+                                duration: Some(
+                                    Instant::now()
+                                        .duration_since(conversion_start),
+                                ),
+                            })
+                    }
+                    _ => Ok(SearchConversionResult::default()),
+                },
+            )
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| ApiError::internal("Error during join", e))?
+    .into_iter()
+    .collect::<Result<Vec<SearchConversionResult>, _>>()?;
 
-    let mut hits = Vec::with_capacity(request.page_size);
-    for result in results {
-        let hit = match result {
-            CacheResult::Hit(search_res) => {
-                Ok(ShouldUpdateCache::Pass(Some(search_res)))
-            }
-            CacheResult::Miss(raw_res) => SearchResult::new(&reader, &raw_res)
-                .map_err(|e| {
-                    ApiError::internal("Unable to parse search result", e)
-                })
-                .map(ShouldUpdateCache::Update),
-            _ => Ok(ShouldUpdateCache::Pass(None)),
-        }?;
+    info!(
+        "To SearchResult conversion took {}ms",
+        Instant::now().duration_since(conversion_start).as_millis()
+    );
 
-        hits.push(hit);
+    let timings = result
+        .iter()
+        .filter_map(|c| c.duration.map(|c| c.as_millis()))
+        .collect::<Vec<_>>();
+
+    if !timings.is_empty() {
+        info!(
+            "Per each : {:.2}ms",
+            timings.iter().copied().sum::<u128>() as f64 / timings.len() as f64
+        );
     }
 
     let results_to_update =
-        hits.iter()
-            .enumerate()
-            .filter_map(|(index, res)| match res {
-                ShouldUpdateCache::Update(res) => Some((
+        result.iter().enumerate().filter_map(|(index, res)| {
+            match res.should_update_cache {
+                true => Some((
                     index + request.page * request.page_size,
-                    res.clone(),
+                    res.result.clone(),
                 )),
-                ShouldUpdateCache::Pass(_) => None,
-            });
+                false => None,
+            }
+        });
 
     context
         .search_cache
         .put_search_results(&query, results_to_update);
 
-    let results = hits
+    let repo = context.repo_pool.repos.first().unwrap().lock().unwrap();
+    let results = result
         .into_iter()
         .map(|c| {
-            let result = match c {
-                ShouldUpdateCache::Update(r) => r,
-                ShouldUpdateCache::Pass(r) => r,
-            };
-
-            if let Some(result) = result {
+            if let Some(result) = c.result {
                 SearchHit::from_search_result(
                     &repo,
                     &index.commit_index_to_commit_id,
@@ -221,7 +278,43 @@ pub async fn search(
     Ok(Json(SearchResponse { results }))
 }
 
-enum ShouldUpdateCache {
-    Update(Option<SearchResult>),
-    Pass(Option<SearchResult>),
+#[derive(Default)]
+struct SearchConversionResult {
+    result: Option<SearchResult>,
+    should_update_cache: bool,
+    duration: Option<Duration>,
+}
+
+struct ThreadSafeRepoReader<'i> {
+    pub repo: Arc<Mutex<Repository>>,
+    pub file_id_to_path: &'i [String],
+    pub commit_index_to_commit_id: &'i [[u8; 20]],
+}
+
+impl<'i> RepoReader for ThreadSafeRepoReader<'i> {
+    fn read_file_at_commit(
+        &self,
+        commit_id: CommitIndex,
+        file_id: FileId,
+    ) -> anyhow::Result<Option<(/*file path*/ String, /*content*/ String)>>
+    {
+        let file_path = self.file_id_to_path.get(file_id).unwrap();
+        let commit =
+            Oid::from_bytes(&self.commit_index_to_commit_id[commit_id])?;
+
+        let repo = self.repo.lock().unwrap();
+        let commit = repo.find_commit(commit)?;
+        let tree = commit.tree()?;
+
+        let entry = tree.get_path(Path::new(&file_path))?;
+        let object = entry.to_object(&repo)?;
+        if let Some(blob) = object.as_blob() {
+            Ok(Some((
+                file_path.to_owned(),
+                String::from_utf8_lossy(blob.content()).to_string(),
+            )))
+        } else {
+            Ok(None)
+        }
+    }
 }

@@ -26,5 +26,6 @@ chrono = { version = "0.4", features = ["clock"] }
 crep-indexer = { path = "../../crep-indexer" }
 git2 = { workspace = true }
 hex = "0.4"
+rayon = { workspace = true }
 utoipa = { version = "5.0", features = ["axum_extras", "macros"] }
 lru = "0.16.2"
