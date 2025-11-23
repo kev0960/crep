@@ -1,6 +1,7 @@
 use axum::Json;
 use utoipa::OpenApi;
 
+pub mod error;
 pub mod health;
 pub mod search;
 

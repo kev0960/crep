@@ -21,14 +21,12 @@ export async function executeSearch(
 
   const payload: SearchRequest = {
     query: trimmed,
+    page: 0,
+    page_size: 10,
   };
 
   if (options.mode) {
     payload.mode = options.mode;
-  }
-
-  if (typeof options.limit === "number") {
-    payload.limit = options.limit;
   }
 
   const response = await fetch("/api/search", {

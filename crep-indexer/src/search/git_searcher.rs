@@ -33,12 +33,29 @@ pub struct SearchOption {
     pub max_num_to_find: Option<usize>,
 }
 
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+pub enum Query {
+    Plain(String),
+    Regex(String),
+}
+
 impl<'i> GitSearcher<'i> {
     pub fn new(index: &'i GitIndex) -> Self {
         Self { index }
     }
 
     pub fn search(
+        &self,
+        query: &Query,
+        option: Option<SearchOption>,
+    ) -> Result<Vec<RawPerFileSearchResult>, String> {
+        match query {
+            Query::Plain(p) => Ok(self.raw_word_search(p, option)),
+            Query::Regex(r) => self.regex_search(r, option),
+        }
+    }
+
+    fn raw_word_search(
         &self,
         query: &str,
         option: Option<SearchOption>,
@@ -63,7 +80,7 @@ impl<'i> GitSearcher<'i> {
         self.find_overlapping_document(&documents_containing_each_word, option)
     }
 
-    pub fn regex_search(
+    fn regex_search(
         &self,
         query: &str,
         option: Option<SearchOption>,
@@ -158,13 +175,14 @@ impl<'i> GitSearcher<'i> {
                     find_matching_commit_histories_in_doc_from_trigrams(
                         doc.as_ref().unwrap(),
                         &trigrams,
+                        self.index.commit_index_to_commit_id.len() - 1,
                     )
                     .map_err(|e| e.to_string())?;
 
                 if let Some(history) = matching_history {
                     search_result.push(RawPerFileSearchResult {
                         file_id: doc_id,
-                        query: Query::Regex(query.to_owned()),
+                        query: MatchedQuery::Regex(query.to_owned()),
                         overlapped_commits: history,
                     });
 
@@ -319,16 +337,16 @@ impl<'i> GitSearcher<'i> {
                     .collect::<Vec<u32>>(),
             );
 
-            let mut with_head: Option<RoaringBitmap> = None;
+            let mut _with_head: Option<RoaringBitmap> = None;
             let doc_modified_commits = match document.is_deleted {
                 true => &document.doc_modified_commits,
                 false => {
                     // If the document was not deleted, then we should also check the HEAD commit.
-                    with_head = Some(document.doc_modified_commits.clone());
-                    with_head.as_mut().unwrap().insert(
+                    _with_head = Some(document.doc_modified_commits.clone());
+                    _with_head.as_mut().unwrap().insert(
                         self.index.commit_index_to_commit_id.len() as u32 - 1,
                     );
-                    with_head.as_ref().unwrap()
+                    _with_head.as_ref().unwrap()
                 }
             };
 
@@ -362,7 +380,7 @@ impl<'i> GitSearcher<'i> {
                 }
 
                 result.push(RawPerFileSearchResult {
-                    query: Query::Words(selected_words),
+                    query: MatchedQuery::Words(selected_words),
                     file_id,
                     overlapped_commits,
                 });
@@ -380,14 +398,14 @@ impl<'i> GitSearcher<'i> {
 }
 
 #[derive(Debug, Clone)]
-pub enum Query {
+pub enum MatchedQuery {
     Words(Vec<String>),
     Regex(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct RawPerFileSearchResult {
-    pub query: Query,
+    pub query: MatchedQuery,
     pub file_id: u32,
     pub overlapped_commits: RoaringBitmap,
 }

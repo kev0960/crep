@@ -13,7 +13,7 @@ use regex::Regex;
 use crate::index::git_index::GitIndex;
 use crate::index::git_indexer::CommitIndex;
 
-use super::git_searcher::Query;
+use super::git_searcher::MatchedQuery;
 use super::git_searcher::RawPerFileSearchResult;
 use super::line_formatter::highlight_line_by_positions;
 
@@ -74,18 +74,18 @@ impl<'i> GitSearchResultViewer<'i> {
             .collect::<Vec<String>>();
 
         let matches = match &result.query {
-            Query::Words(words) => self
+            MatchedQuery::Words(words) => self
                 .find_word_matches_in_document(words, &file_content)?
                 .iter()
                 .map(|(k, v)| (*k, *v))
                 .collect::<Vec<_>>(),
-            Query::Regex(regex) => {
+            MatchedQuery::Regex(regex) => {
                 let r = Regex::new(regex)?;
                 self.find_regex_matches_in_document(&r, &file_content)
             }
         };
 
-        if let Query::Words(ref words) = result.query {
+        if let MatchedQuery::Words(ref words) = result.query {
             if matches.len() != words.len() {
                 // Not every words are found in the document.
                 return Ok(None);

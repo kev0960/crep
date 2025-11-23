@@ -3,7 +3,7 @@ use serde::Serialize;
 
 use crate::index::git_indexer::CommitIndex;
 use crate::index::git_indexer::FileId;
-use crate::search::git_searcher::Query;
+use crate::search::git_searcher::MatchedQuery;
 use crate::search::git_searcher::RawPerFileSearchResult;
 use crate::search::result::single_commit_search_result::SingleCommitSearchResult;
 
@@ -70,7 +70,7 @@ impl SearchResult {
 
     fn get_search_result_at_commit<Reader: RepoReader>(
         reader: &Reader,
-        query: &Query,
+        query: &MatchedQuery,
         commit_id: CommitIndex,
         file_id: FileId,
     ) -> anyhow::Result<(String, Option<SingleCommitSearchResult>)> {

@@ -85,9 +85,7 @@ const renderMatchSection = (
           <span>When: {formattedDate}</span>
         </div>
         {detail.commit_summary && (
-          <p className="mt-2 text-[#3c4043]">
-            {detail.commit_summary}
-          </p>
+          <p className="mt-2 text-[#3c4043]">{detail.commit_summary}</p>
         )}
       </header>
 
@@ -111,7 +109,7 @@ const renderMatchSection = (
 function App() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<SearchMode>("plain");
-  const [results, setResults] = useState<SearchHit[]>([]);
+  const [results, setResults] = useState<(SearchHit | null)[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
@@ -187,10 +185,7 @@ function App() {
         </form>
 
         {error && (
-          <div
-            role="alert"
-            className="mt-5 text-[0.95rem] text-[#d93025]"
-          >
+          <div role="alert" className="mt-5 text-[0.95rem] text-[#d93025]">
             {error}
           </div>
         )}
@@ -199,33 +194,35 @@ function App() {
       </div>
 
       {hasSubmitted && !loading && (
-        <section
-          className="mx-auto mb-16 mt-10 w-full max-w-[900px] px-6"
-        >
+        <section className="mx-auto mb-16 mt-10 w-full max-w-[900px] px-6">
           {results.length === 0 && !error ? (
             <p className="text-[#5f6368]">
               No results yet. Try a broader query or switch modes.
             </p>
           ) : (
-            results.map((hit) => (
-              <div
-                key={`${hit.file_path}-${hit.first_match.commit_sha}`}
-                className="mb-10"
-              >
-                <h2
-                  className="mb-1 text-[1.2rem] text-[#1a0dab] break-all"
-                >
-                  {hit.file_path}
-                </h2>
-                <p className="mb-2 text-[#5f6368]">
-                  Matching {hit.first_match.lines.length} line
-                  {hit.first_match.lines.length === 1 ? "" : "s"}
-                </p>
+            results.flatMap((hit) => {
+              if (!hit) {
+                return [];
+              }
 
-                {renderMatchSection("First seen", hit.first_match)}
-                {renderMatchSection("Last seen", hit.last_match)}
-              </div>
-            ))
+              return [
+                <div
+                  key={`${hit.file_path}-${hit.first_match.commit_sha}`}
+                  className="mb-10"
+                >
+                  <h2 className="mb-1 text-[1.2rem] text-[#1a0dab] break-all">
+                    {hit.file_path}
+                  </h2>
+                  <p className="mb-2 text-[#5f6368]">
+                    Matching {hit.first_match.lines.length} line
+                    {hit.first_match.lines.length === 1 ? "" : "s"}
+                  </p>
+
+                  {renderMatchSection("First seen", hit.first_match)}
+                  {renderMatchSection("Last seen", hit.last_match)}
+                </div>,
+              ];
+            })
           )}
         </section>
       )}

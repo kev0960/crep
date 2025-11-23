@@ -32,8 +32,6 @@ export type components = {
     };
     MatchDetail: {
       commit_date: string;
-      /** Format: int32 */
-      commit_index: number;
       commit_sha: string;
       commit_summary: string;
       lines: components["schemas"]["LineMatch"][];
@@ -46,12 +44,13 @@ export type components = {
     /** @enum {string} */
     SearchMode: "plain" | "regex";
     SearchRequest: {
-      limit?: number | null;
       mode?: components["schemas"]["SearchMode"];
+      page?: number;
+      page_size?: number;
       query: string;
     };
     SearchResponse: {
-      results: components["schemas"]["SearchHit"][];
+      results: (null | components["schemas"]["SearchHit"])[];
     };
   };
   responses: never;

@@ -3,6 +3,7 @@ use std::sync::mpsc::channel;
 
 use chrono::DateTime;
 use chrono::Local;
+use crep_indexer::search::git_searcher::Query;
 use crep_indexer::search::result::search_result::SearchResult;
 use crep_indexer::search::result::single_commit_search_result::SingleCommitSearchResult;
 use ratatui::DefaultTerminal;
@@ -28,7 +29,6 @@ use std::sync::mpsc;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
 
-use crate::searcher::Query;
 use crate::searcher::Searcher;
 
 #[derive(PartialEq, Copy, Clone)]
@@ -228,7 +228,7 @@ impl<'a> App<'a> {
                             QueryType::RawString => {
                                 self.search_send
                                     .send(SearchMessage::SearchRequest(
-                                        Query::RawString(
+                                        Query::Plain(
                                             self.input.value().to_owned(),
                                         ),
                                     ))

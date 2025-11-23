@@ -7,6 +7,7 @@ use trigram_hash::trigram_hash::TrigramKey;
 use trigram_hash::trigram_hash::split_lines_to_token_set;
 
 use crate::index::document::Document;
+use crate::index::git_indexer::CommitIndex;
 use crate::search::regex_search::RegexOrString;
 use crate::search::regex_search::Trigram;
 use crate::util::bitmap::utils::intersect_bitmap_vec;
@@ -16,12 +17,18 @@ use crate::util::bitmap::utils::union_bitmaps;
 pub fn find_matching_commit_histories_in_doc_from_trigrams(
     doc: &Document,
     trigrams: &[Trigram],
+    head_commit_index: CommitIndex,
 ) -> anyhow::Result<Option<RoaringBitmap>> {
     if trigrams.is_empty() {
         return Ok(None);
     }
 
     let mut commit_bitmaps = vec![doc.doc_modified_commits.clone()];
+    if doc.is_deleted {
+        let mut head_bitmap = RoaringBitmap::new();
+        head_bitmap.insert(head_commit_index as u32);
+        commit_bitmaps.push(head_bitmap);
+    }
 
     for trigram in trigrams {
         if doc.all_words.is_none() {

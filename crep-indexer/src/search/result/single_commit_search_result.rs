@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::index::git_indexer::CommitIndex;
-use crate::search::git_searcher::Query;
+use crate::search::git_searcher::MatchedQuery;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SingleCommitSearchResult {
@@ -25,24 +25,24 @@ pub struct MatchingWordPos {
 
 impl SingleCommitSearchResult {
     pub fn new(
-        query: &Query,
+        query: &MatchedQuery,
         commit_id: CommitIndex,
         file_content: &[&str],
     ) -> anyhow::Result<Option<Self>> {
         let matches = match query {
-            Query::Words(words) => {
+            MatchedQuery::Words(words) => {
                 Self::find_word_matches_in_document(words, file_content)?
                     .iter()
                     .map(|(k, v)| (*k, *v))
                     .collect::<Vec<_>>()
             }
-            Query::Regex(regex) => {
+            MatchedQuery::Regex(regex) => {
                 let r = Regex::new(regex)?;
                 Self::find_regex_matches_in_document(&r, file_content)
             }
         };
 
-        if let Query::Words(words) = query
+        if let MatchedQuery::Words(words) = query
             && matches.len() != words.len()
         {
             // Not every words are found in the document.

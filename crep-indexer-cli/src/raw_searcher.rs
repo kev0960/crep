@@ -1,7 +1,7 @@
 use color_eyre::owo_colors::OwoColorize;
+use crep_indexer::search::git_searcher::Query;
 use crep_indexer::search::result::single_commit_search_result::SingleCommitSearchResult;
 
-use crate::searcher::Query;
 use crate::searcher::Searcher;
 
 pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
@@ -87,7 +87,7 @@ fn convert_search_result_to_lines(
 
 fn string_to_query(query: String) -> Query {
     if query.starts_with("q:") {
-        Query::RawString(query.trim().chars().skip(2).collect())
+        Query::Plain(query.trim().chars().skip(2).collect())
     } else if query.starts_with("r:") {
         Query::Regex(query.trim().chars().skip(2).collect())
     } else {

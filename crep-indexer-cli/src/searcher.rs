@@ -6,6 +6,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use crep_indexer::index::git_index::GitIndex;
 use crep_indexer::search::git_searcher::GitSearcher;
+use crep_indexer::search::git_searcher::Query;
 use crep_indexer::search::git_searcher::SearchOption;
 use crep_indexer::search::result::search_result::SearchResult;
 use crep_indexer::search::result::simple_repo_reader::SimpleRepoReader;
@@ -18,12 +19,6 @@ pub struct Searcher<'a> {
     repo: Repository,
     index: &'a GitIndex,
     searcher: GitSearcher<'a>,
-}
-
-#[derive(Debug)]
-pub enum Query {
-    Regex(String),
-    RawString(String),
 }
 
 impl<'a> Searcher<'a> {
@@ -43,20 +38,12 @@ impl<'a> Searcher<'a> {
 
         let raw_result_start = Instant::now();
 
-        let raw_results = match query {
-            Query::Regex(regex) => self.searcher.regex_search(
-                regex,
-                Some(SearchOption {
-                    max_num_to_find: None,
-                }),
-            ),
-            Query::RawString(key) => Ok(self.searcher.search(
-                key,
-                Some(SearchOption {
-                    max_num_to_find: None,
-                }),
-            )),
-        };
+        let raw_results = self.searcher.search(
+            query,
+            Some(SearchOption {
+                max_num_to_find: None,
+            }),
+        );
 
         info!(
             "Raw result end: {}",
