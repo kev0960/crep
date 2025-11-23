@@ -1,30 +1,54 @@
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use chrono::DateTime;
 use chrono::Utc;
 use crep_indexer::index::git_index::GitIndex;
+use crep_indexer::index::git_indexer::CommitIndex;
+use crep_indexer::index::git_indexer::FileId;
 use crep_indexer::search::git_searcher::GitSearcher;
 use crep_indexer::search::git_searcher::Query;
 use crep_indexer::search::git_searcher::SearchOption;
+use crep_indexer::search::result::search_result::RepoReader;
 use crep_indexer::search::result::search_result::SearchResult;
-use crep_indexer::search::result::simple_repo_reader::SimpleRepoReader;
 use git2::Oid;
 use git2::Repository;
 use log::debug;
 use log::info;
+use rayon::prelude::*;
 
 pub struct Searcher<'a> {
     repo: Repository,
+    pool: RepoPool,
     index: &'a GitIndex,
     searcher: GitSearcher<'a>,
+}
+
+struct RepoPool {
+    repos: Vec<Arc<Mutex<Repository>>>,
+}
+
+impl RepoPool {
+    fn new(num_threads: usize, path: &str) -> Self {
+        let mut repos = vec![];
+        for _ in 0..num_threads {
+            repos.push(Arc::new(Mutex::new(
+                Repository::open(Path::new(path)).unwrap(),
+            )));
+        }
+
+        Self { repos }
+    }
 }
 
 impl<'a> Searcher<'a> {
     pub fn new(index: &'a GitIndex, path: &str) -> Self {
         Self {
             repo: Repository::open(Path::new(path)).unwrap(),
+            pool: RepoPool::new(rayon::current_num_threads(), path),
             index,
             searcher: GitSearcher::new(index),
         }
@@ -34,8 +58,6 @@ impl<'a> Searcher<'a> {
         &mut self,
         query: &Query,
     ) -> anyhow::Result<Vec<SearchResult>> {
-        let mut search_results = vec![];
-
         let raw_result_start = Instant::now();
 
         let raw_results = self.searcher.search(
@@ -56,33 +78,43 @@ impl<'a> Searcher<'a> {
 
         let raw_results = raw_results.unwrap();
 
-        let mut raw_result_times = vec![Instant::now()];
-        let reader = SimpleRepoReader {
-            repo: &self.repo,
-            file_id_to_path: &self.index.file_id_to_path,
-            commit_index_to_commit_id: &self.index.commit_index_to_commit_id,
-        };
+        let to_search_result_start = Instant::now();
+        let results = raw_results
+            .par_iter()
+            .map_init(
+                || ThreadSafeRepoReader {
+                    repo: self
+                        .pool
+                        .repos
+                        .get(rayon::current_thread_index().unwrap())
+                        .unwrap()
+                        .clone(),
+                    file_id_to_path: &self.index.file_id_to_path,
+                    commit_index_to_commit_id: &self
+                        .index
+                        .commit_index_to_commit_id,
+                },
+                |reader, result| {
+                    debug!(
+                        "Checking {result:?} at {}",
+                        self.index.file_id_to_path[result.file_id as usize]
+                    );
 
-        for result in raw_results {
-            debug!(
-                "Checking {result:?} at {}",
-                self.index.file_id_to_path[result.file_id as usize]
-            );
+                    SearchResult::new(reader, result).unwrap()
+                },
+            )
+            .filter(|res| res.is_some())
+            .take_any(100)
+            .collect::<Vec<_>>();
 
-            if let Some(result) = SearchResult::new(&reader, &result)? {
-                search_results.push(result);
-            }
+        info!(
+            "Search result end: {}",
+            Instant::now()
+                .duration_since(to_search_result_start)
+                .as_millis()
+        );
 
-            if search_results.len() >= 10 {
-                break;
-            }
-
-            raw_result_times.push(Instant::now());
-        }
-
-        show_raw_result_timing(&raw_result_times);
-
-        Ok(search_results)
+        Ok(results.into_iter().map(|s| s.unwrap()).collect())
     }
 
     pub fn get_commit_info(
@@ -144,4 +176,38 @@ fn show_raw_result_timing(timings: &[Instant]) {
     let total = gaps.iter().sum::<f64>();
     info!("Avg result : {}ms", total / (gaps.len() as f64) * 1000.);
     info!("Total : {}ms", total * 1000.);
+}
+
+struct ThreadSafeRepoReader<'i> {
+    pub repo: Arc<Mutex<Repository>>,
+    pub file_id_to_path: &'i [String],
+    pub commit_index_to_commit_id: &'i [[u8; 20]],
+}
+
+impl<'i> RepoReader for ThreadSafeRepoReader<'i> {
+    fn read_file_at_commit(
+        &self,
+        commit_id: CommitIndex,
+        file_id: FileId,
+    ) -> anyhow::Result<Option<(/*file path*/ String, /*content*/ String)>>
+    {
+        let file_path = self.file_id_to_path.get(file_id).unwrap();
+        let commit =
+            Oid::from_bytes(&self.commit_index_to_commit_id[commit_id])?;
+
+        let repo = self.repo.lock().unwrap();
+        let commit = repo.find_commit(commit)?;
+        let tree = commit.tree()?;
+
+        let entry = tree.get_path(Path::new(&file_path))?;
+        let object = entry.to_object(&repo)?;
+        if let Some(blob) = object.as_blob() {
+            Ok(Some((
+                file_path.to_owned(),
+                String::from_utf8_lossy(blob.content()).to_string(),
+            )))
+        } else {
+            Ok(None)
+        }
+    }
 }

@@ -17,11 +17,7 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
 
         let mut lines: Vec<String> = vec![];
 
-        for (index, result) in results.iter().enumerate() {
-            if index >= 10 {
-                break;
-            }
-
+        for result in results {
             lines.push(format!("File: {}", result.file_path));
 
             match &result.last_match {
