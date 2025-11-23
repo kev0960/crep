@@ -24,10 +24,11 @@ pub fn find_matching_commit_histories_in_doc_from_trigrams(
     }
 
     let mut commit_bitmaps = vec![doc.doc_modified_commits.clone()];
-    if doc.is_deleted {
-        let mut head_bitmap = RoaringBitmap::new();
-        head_bitmap.insert(head_commit_index as u32);
-        commit_bitmaps.push(head_bitmap);
+    if !doc.is_deleted {
+        commit_bitmaps
+            .last_mut()
+            .unwrap()
+            .insert(head_commit_index as u32);
     }
 
     for trigram in trigrams {
