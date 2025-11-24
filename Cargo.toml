@@ -3,6 +3,7 @@ members = [
   "crep-indexer",
   "crep-indexer-cli",
   "crep-server/server",
+  "git-ignore",
   "trigram-hash",
 ]
 resolver = "3"

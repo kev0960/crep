@@ -1,0 +1,13 @@
+[package]
+name = "git-ignore"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[lints]
+workspace = true
+
+[lib]
+name = "git_ignore"
+path = "src/lib.rs"
