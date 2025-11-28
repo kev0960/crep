@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::Path;
 use std::time::Instant;
 
 use axum::serve;
@@ -6,6 +7,9 @@ use clap::Parser;
 use crep_server::config::ServerConfig;
 use crep_server::router;
 use crep_server::server_context::ServerContext;
+use crep_server::watch::ignore_checker::IgnoreChecker;
+use crep_server::watch::repo_watcher::WatcherConfig;
+use crep_server::watch::repo_watcher::init_watcher_and_indexer;
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
@@ -40,8 +44,25 @@ async fn main() -> anyhow::Result<()> {
     let config =
         ServerConfig::new(args.config.as_deref().unwrap_or("./config.yaml"))?;
 
+    info!("Start setting up Repo indexer...");
+    let repo_indexer_start_time = Instant::now();
+    let ignore_checker = IgnoreChecker::new(&config.repo_path);
+    let (mut watcher, indexer) = init_watcher_and_indexer(WatcherConfig {
+        debounce_seconds: 10,
+    });
+    indexer.start();
+    watcher
+        .start_watch(Path::new(&config.repo_path), ignore_checker)
+        .expect("Unable to start the watch!");
+    info!(
+        "Setting up the repo watcher complete. Took {}s",
+        Instant::now()
+            .duration_since(repo_indexer_start_time)
+            .as_secs_f64()
+    );
+
     let server_init_start_time = Instant::now();
-    info!("Start server initialization...");
+    info!("Start building the server context...");
 
     let context = ServerContext::new(&config)?;
 
@@ -51,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         .parse()?;
 
     info!(
-        "Initialization complete. Took {}",
+        "Initialization complete. Took {}s",
         Instant::now()
             .duration_since(server_init_start_time)
             .as_secs_f64()
