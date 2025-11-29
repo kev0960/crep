@@ -8,6 +8,7 @@ pub mod api;
 pub mod config;
 mod search;
 pub mod server_context;
+pub mod watch;
 
 pub fn router(state: ServerContext) -> Router {
     Router::new()
