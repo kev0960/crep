@@ -46,7 +46,7 @@ pub enum QueryType {
 
 pub struct App<'a> {
     state: RwLock<State>,
-    searcher: Arc<Mutex<Searcher<'a>>>,
+    searcher: Arc<Mutex<Searcher<'a, 'a>>>,
     input: Input,
 
     ui_send: mpsc::Sender<Message>,
@@ -73,7 +73,7 @@ enum SearchMessage {
 }
 
 impl<'a> App<'a> {
-    pub fn new(searcher: Searcher<'a>) -> Self {
+    pub fn new(searcher: Searcher<'a, 'a>) -> Self {
         let (ui_send, ui_recv) = channel();
         let (search_send, search_recv) = channel();
 

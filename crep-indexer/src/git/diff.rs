@@ -1,6 +1,9 @@
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::index::git_indexer::CommitIndex;
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Default)]
 pub struct FileDiffTracker {
     // the index that each line ends.
     pub commit_line_end: Vec<usize>,

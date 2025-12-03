@@ -9,6 +9,8 @@ use chrono::Utc;
 use crep_indexer::index::git_index::GitIndex;
 use crep_indexer::index::git_indexer::CommitIndex;
 use crep_indexer::index::git_indexer::FileId;
+use crep_indexer::index::not_committed_indexer;
+use crep_indexer::index::not_committed_indexer::NotCommitedFilesIndexer;
 use crep_indexer::search::git_searcher::GitSearcher;
 use crep_indexer::search::git_searcher::Query;
 use crep_indexer::search::git_searcher::SearchOption;
@@ -20,10 +22,11 @@ use log::debug;
 use log::info;
 use rayon::prelude::*;
 
-pub struct Searcher<'a> {
+pub struct Searcher<'a, 'n> {
     pool: RepoPool,
     index: &'a GitIndex,
     searcher: GitSearcher<'a>,
+    not_committed_indexer: Option<&'n NotCommitedFilesIndexer>,
 }
 
 struct RepoPool {
@@ -43,14 +46,19 @@ impl RepoPool {
     }
 }
 
-impl<'a> Searcher<'a> {
-    pub fn new(index: &'a GitIndex, path: &str) -> Self {
+impl<'a, 'n> Searcher<'a, 'n> {
+    pub fn new(
+        index: &'a GitIndex,
+        not_committed_indexer: Option<&'n NotCommitedFilesIndexer>,
+        path: &str,
+    ) -> Self {
         assert!(rayon::current_num_threads() > 0);
 
         Self {
             pool: RepoPool::new(rayon::current_num_threads(), path),
             index,
             searcher: GitSearcher::new(index),
+            not_committed_indexer,
         }
     }
 
@@ -100,7 +108,12 @@ impl<'a> Searcher<'a> {
                         self.index.file_id_to_path[result.file_id as usize]
                     );
 
-                    SearchResult::new(reader, result).unwrap()
+                    SearchResult::new(
+                        reader,
+                        &self.not_committed_indexer,
+                        result,
+                    )
+                    .unwrap()
                 },
             )
             .filter(|res| res.is_some())

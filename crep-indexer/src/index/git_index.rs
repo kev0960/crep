@@ -16,6 +16,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use trigram_hash::trigram_hash::TrigramKey;
 
+use crate::git::diff::FileDiffTracker;
+
 use super::document::Document;
 use super::git_index_serialization::GitIndexSerialization;
 use super::git_indexer::CommitIndex;
@@ -38,13 +40,15 @@ pub struct GitIndex {
     // Files that are not deleted at HEAD.
     pub not_deleted_files_head: RoaringBitmap,
 
+    pub diff_tracker: Vec<Option<FileDiffTracker>>,
+
     #[serde(skip)]
     pub all_words: Set<Vec<u8>>,
 }
 
 impl GitIndex {
     // Build the finalized index.
-    pub fn build(indexer: GitIndexer) -> Self {
+    pub fn build(mut indexer: GitIndexer) -> Self {
         let mut keys = indexer
             .word_to_file_id_ever_contained
             .keys()
@@ -63,6 +67,8 @@ impl GitIndex {
             }),
         );
 
+        let total_file_num = indexer.file_id_to_path.len();
+
         Self {
             commit_index_to_commit_id: indexer.commit_index_to_commit_id,
             commit_id_to_commit_index: indexer.commit_id_to_commit_index,
@@ -72,6 +78,9 @@ impl GitIndex {
                 .word_to_file_id_ever_contained,
             all_words,
             not_deleted_files_head,
+            diff_tracker: (0..total_file_num)
+                .map(|id: FileId| indexer.file_id_to_diff_tracker.remove(&id))
+                .collect(),
         }
     }
 
@@ -185,6 +194,7 @@ mod tests {
             all_words: Set::from_iter(["a", "ab", "abc"].iter()).unwrap(),
             not_deleted_files_head: RoaringBitmap::from_sorted_iter(0..2)
                 .unwrap(),
+            diff_tracker: vec![None, None],
         };
 
         let encoded = serde::encode_to_vec(index, bincode::config::standard());

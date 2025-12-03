@@ -1,5 +1,6 @@
 use crate::git::diff::FileDiffTracker;
 use crate::git::diff::LineDeleteResult;
+use crate::index::git_index::GitIndex;
 use crate::index::git_index_debug::IndexDebugStats;
 use ahash::AHashMap;
 use ahash::AHashSet;
@@ -39,7 +40,7 @@ pub struct GitIndexer {
 
     file_name_to_id: AHashMap<String, FileId>,
     pub file_id_to_path: Vec<String>,
-    file_id_to_diff_tracker: AHashMap<FileId, FileDiffTracker>,
+    pub file_id_to_diff_tracker: AHashMap<FileId, FileDiffTracker>,
 
     pub file_id_to_document: AHashMap<FileId, Document>,
 
@@ -76,6 +77,38 @@ impl GitIndexer {
             file_id_to_diff_tracker: AHashMap::new(),
             file_id_to_document: AHashMap::new(),
             word_to_file_id_ever_contained: AHashMap::new(),
+            ignored_non_utf8_file_path_set: AHashSet::new(),
+        }
+    }
+
+    pub fn from_git_index(config: GitIndexerConfig, index: GitIndex) -> Self {
+        Self {
+            config,
+            commit_index_to_commit_id: index.commit_index_to_commit_id,
+            commit_id_to_commit_index: index.commit_id_to_commit_index,
+            file_name_to_id: index
+                .file_id_to_path
+                .iter()
+                .enumerate()
+                .map(|(index, path)| (path.clone(), index))
+                .collect(),
+            file_id_to_path: index.file_id_to_path,
+            file_id_to_document: index.file_id_to_document,
+            file_id_to_diff_tracker: index
+                .diff_tracker
+                .into_iter()
+                .enumerate()
+                .filter_map(|(file_id, tracker)| {
+                    if let Some(tracker) = tracker {
+                        Some((file_id, tracker))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            word_to_file_id_ever_contained: index
+                .word_to_file_id_ever_contained,
+            utf8_file_checker: Utf8FileChecker::new().unwrap(),
             ignored_non_utf8_file_path_set: AHashSet::new(),
         }
     }

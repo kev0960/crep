@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use ahash::HashSet;
+use ahash::AHashSet;
 use notify::Event;
 use notify::EventKind;
 use notify::RecommendedWatcher;
@@ -202,8 +202,8 @@ impl Indexer {
 
             // Merge all paths to check. If the file was created and then deleted later, then no
             // need to visit the file again.
-            let mut modified_files = HashSet::default();
-            let mut created_files = HashSet::default();
+            let mut modified_files = AHashSet::new();
+            let mut created_files = AHashSet::new();
 
             for mut event in file_events {
                 match event.0 {

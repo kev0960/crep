@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use trigram_hash::trigram_hash::TrigramKey;
 
+use crate::git::diff::FileDiffTracker;
 use crate::index::document::Document;
 use crate::index::git_index::GitIndex;
 use crate::index::git_indexer::CommitIndex;
@@ -17,6 +18,7 @@ pub struct GitIndexSerialization {
     pub file_id_to_document: AHashMap<FileId, Document>,
     pub word_to_file_id_ever_contained: AHashMap<TrigramKey, RoaringBitmap>,
     pub not_deleted_files_head: RoaringBitmap,
+    pub diff_tracker: Vec<Option<FileDiffTracker>>,
 }
 
 impl From<GitIndexSerialization> for GitIndex {
@@ -44,6 +46,7 @@ impl From<GitIndexSerialization> for GitIndex {
             word_to_file_id_ever_contained: s.word_to_file_id_ever_contained,
             not_deleted_files_head: s.not_deleted_files_head,
             all_words,
+            diff_tracker: s.diff_tracker,
         }
     }
 }
