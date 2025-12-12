@@ -9,6 +9,13 @@ use ahash::AHashSet;
 use anyhow::anyhow;
 use git2::{Repository, Status, StatusOptions};
 
+use crate::search::{
+    git_searcher::{MatchedQuery, Query},
+    result::single_commit_search_result::{
+        SearchMatchInFile, get_matches_in_file,
+    },
+};
+
 pub struct NotCommitedFilesIndexer {
     created_files: AHashSet<String>,
     modified_files: AHashSet<String>,
@@ -105,6 +112,34 @@ impl NotCommitedFilesIndexer {
         } else {
             Ok(FileContent::NotChanged)
         }
+    }
+
+    pub fn search(
+        &self,
+        query: &Query,
+    ) -> anyhow::Result<Vec<SearchMatchInFile>> {
+        let matched_query = match query {
+            Query::Plain(q) => MatchedQuery::Words(
+                q.split(' ').map(|s| s.to_owned()).collect::<Vec<_>>(),
+            ),
+            Query::Regex(q) => MatchedQuery::Regex(q.clone()),
+        };
+
+        let mut matches = vec![];
+        for path in self.created_files.iter().chain(self.modified_files.iter())
+        {
+            let full_path = Path::new(&self.root_path).join(path);
+
+            let content = read_file(&full_path)?;
+            if let Some(search_match) = get_matches_in_file(
+                &matched_query,
+                &content.lines().collect::<Vec<_>>(),
+            )? {
+                matches.push(search_match);
+            }
+        }
+
+        Ok(matches)
     }
 }
 

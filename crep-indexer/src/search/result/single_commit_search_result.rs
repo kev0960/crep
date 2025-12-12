@@ -44,15 +44,15 @@ impl SingleCommitSearchResult {
     }
 }
 
+pub type SearchMatchInFile = (
+    BTreeMap<usize, Vec<(String, usize)>>,
+    BTreeMap<usize, String>,
+);
+
 pub fn get_matches_in_file(
     query: &MatchedQuery,
     file_content: &[&str],
-) -> anyhow::Result<
-    Option<(
-        BTreeMap<usize, Vec<(String, usize)>>,
-        BTreeMap<usize, String>,
-    )>,
-> {
+) -> anyhow::Result<Option<SearchMatchInFile>> {
     let matches = match query {
         MatchedQuery::Words(words) => {
             find_word_matches_in_document(words, file_content)?
