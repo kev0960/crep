@@ -58,8 +58,7 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
-    let mut searcher =
-        Searcher::new(&index, /*not_committed_indexe=*/ None, &args.path);
+    let mut searcher = Searcher::new(&index, &args.path);
 
     if args.debug {
         handle_query(&mut searcher).unwrap();

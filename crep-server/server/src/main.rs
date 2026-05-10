@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use axum::serve;
@@ -49,7 +50,10 @@ async fn main() -> anyhow::Result<()> {
     let ignore_checker = IgnoreChecker::new(&config.repo_path);
     let (mut watcher, indexer) = init_watcher_and_indexer(WatcherConfig {
         debounce_seconds: 10,
+        repo_path: PathBuf::from(&config.repo_path),
     });
+
+    let not_committed_indexer = indexer.not_commited_file_indexer.clone();
     indexer.start();
     watcher
         .start_watch(Path::new(&config.repo_path), ignore_checker)
@@ -64,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
     let server_init_start_time = Instant::now();
     info!("Start building the server context...");
 
-    let context = ServerContext::new(&config)?;
+    let context = ServerContext::new(&config, not_committed_indexer)?;
 
     let app = router(context);
     let addr: SocketAddr = std::env::var("BIND_ADDR")

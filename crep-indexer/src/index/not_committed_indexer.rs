@@ -17,12 +17,15 @@ use crate::search::{
 };
 
 pub struct NotCommitedFilesIndexer {
+    fileset: Mutex<FileSet>,
+    root_path: PathBuf,
+    repo: Arc<Mutex<Repository>>,
+}
+
+pub struct FileSet {
     created_files: AHashSet<String>,
     modified_files: AHashSet<String>,
     removed_files: AHashSet<String>,
-
-    root_path: PathBuf,
-    repo: Arc<Mutex<Repository>>,
 }
 
 impl NotCommitedFilesIndexer {
@@ -30,15 +33,17 @@ impl NotCommitedFilesIndexer {
         let repo = Repository::open(root_path)?;
 
         Ok(Self {
-            created_files: AHashSet::new(),
-            modified_files: AHashSet::new(),
-            removed_files: AHashSet::new(),
+            fileset: Mutex::new(FileSet {
+                created_files: AHashSet::new(),
+                modified_files: AHashSet::new(),
+                removed_files: AHashSet::new(),
+            }),
             root_path: PathBuf::from(root_path),
             repo: Arc::new(Mutex::new(repo)),
         })
     }
 
-    pub fn reindex_files(&mut self, path: &[PathBuf]) -> anyhow::Result<()> {
+    pub fn reindex_files(&self, path: &[PathBuf]) -> anyhow::Result<()> {
         let mut opts = StatusOptions::new();
         opts.include_untracked(true)
             .recurse_untracked_dirs(true)
@@ -49,6 +54,7 @@ impl NotCommitedFilesIndexer {
         let repo = self.repo.lock().unwrap();
         let status = repo.statuses(Some(&mut opts))?;
 
+        let mut fileset = self.fileset.lock().unwrap();
         for entry in status.iter() {
             let path = PathBuf::from(entry.path().unwrap());
             if !interested_paths.contains(&path) {
@@ -65,13 +71,13 @@ impl NotCommitedFilesIndexer {
 
             match index_verdict {
                 IndexVerdict::New => {
-                    self.created_files.insert(path_str);
+                    fileset.created_files.insert(path_str);
                 }
                 IndexVerdict::Modify => {
-                    self.modified_files.insert(path_str);
+                    fileset.modified_files.insert(path_str);
                 }
                 IndexVerdict::Remove => {
-                    self.removed_files.insert(path_str);
+                    fileset.removed_files.insert(path_str);
                 }
                 IndexVerdict::Ignore => {
                     continue;
@@ -87,9 +93,9 @@ impl NotCommitedFilesIndexer {
                 .ok_or(anyhow!("Path is not UTF-8"))?
                 .to_owned();
 
-            self.created_files.remove(&path_str);
-            self.modified_files.remove(&path_str);
-            self.removed_files.remove(&path_str);
+            fileset.created_files.remove(&path_str);
+            fileset.modified_files.remove(&path_str);
+            fileset.removed_files.remove(&path_str);
         }
 
         Ok(())
@@ -101,13 +107,14 @@ impl NotCommitedFilesIndexer {
     ) -> anyhow::Result<FileContent> {
         let full_path = Path::new(&self.root_path).join(file_path);
 
-        if self.removed_files.contains(file_path) {
+        let fileset = self.fileset.lock().unwrap();
+        if fileset.removed_files.contains(file_path) {
             return Ok(FileContent::Deleted);
         }
 
-        if self.created_files.contains(file_path) {
+        if fileset.created_files.contains(file_path) {
             Ok(FileContent::Created(read_file(&full_path)?))
-        } else if self.modified_files.contains(file_path) {
+        } else if fileset.modified_files.contains(file_path) {
             Ok(FileContent::Modified(read_file(&full_path)?))
         } else {
             Ok(FileContent::NotChanged)
@@ -126,8 +133,18 @@ impl NotCommitedFilesIndexer {
         };
 
         let mut matches = vec![];
-        for path in self.created_files.iter().chain(self.modified_files.iter())
-        {
+
+        let all_files = {
+            let fileset = self.fileset.lock().unwrap();
+            fileset
+                .created_files
+                .iter()
+                .chain(fileset.modified_files.iter())
+                .map(|f| f.to_owned())
+                .collect::<Vec<_>>()
+        };
+
+        for path in all_files {
             let full_path = Path::new(&self.root_path).join(path);
 
             let content = read_file(&full_path)?;

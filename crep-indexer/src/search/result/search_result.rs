@@ -3,7 +3,6 @@ use serde::Serialize;
 
 use crate::index::git_indexer::CommitIndex;
 use crate::index::git_indexer::FileId;
-use crate::index::not_committed_indexer::NotCommitedFilesIndexer;
 use crate::search::git_searcher::MatchedQuery;
 use crate::search::git_searcher::RawPerFileSearchResult;
 use crate::search::result::single_commit_search_result::SingleCommitSearchResult;
@@ -18,7 +17,6 @@ pub struct SearchResult {
 impl SearchResult {
     pub fn new<Reader: RepoReader>(
         reader: &Reader,
-        not_committed_indexer: &Option<&NotCommitedFilesIndexer>,
         result: &RawPerFileSearchResult,
     ) -> anyhow::Result<Option<Self>> {
         let mut file_path = None;

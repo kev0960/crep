@@ -45,7 +45,9 @@ impl SingleCommitSearchResult {
 }
 
 pub type SearchMatchInFile = (
+    // words per line.
     BTreeMap<usize, Vec<(String, usize)>>,
+    // lines
     BTreeMap<usize, String>,
 );
 

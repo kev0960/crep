@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use ahash::AHashSet;
+use crep_indexer::index::not_committed_indexer::NotCommitedFilesIndexer;
 use notify::Event;
 use notify::EventKind;
 use notify::RecommendedWatcher;
@@ -21,6 +22,7 @@ use crate::watch::ignore_checker::IgnoreChecker;
 
 pub struct WatcherConfig {
     pub debounce_seconds: u64,
+    pub repo_path: PathBuf,
 }
 
 pub fn init_watcher_and_indexer(
@@ -35,7 +37,11 @@ pub fn init_watcher_and_indexer(
         watcher_config.debounce_seconds,
     ));
 
-    let indexer = Indexer::new(recv_indexer_signal, file_paths_modified);
+    let indexer = Indexer::new(
+        recv_indexer_signal,
+        file_paths_modified,
+        watcher_config.repo_path,
+    );
     (
         RepoWatcher {
             debouncer,
@@ -155,8 +161,8 @@ impl Debouncer {
             let is_timer_set = self.is_timer_set.clone();
             let debounce_seconds = self.debounce_seconds;
 
-            // Because the schedule_indexer_wakeup called from the notify callback, which is an OS
-            // thread, tokio::spawn does not properly detect the tokio runtime. Because of this, we
+            // The schedule_indexer_wakeup is called from the notify callback, which is an OS
+            // thread and hence tokio::spawn does not properly detect the tokio runtime. Because of this, we
             // have to manually pass the handle.
             self.handle.spawn(async move {
                 sleep(Duration::from_secs(debounce_seconds)).await;
@@ -171,16 +177,21 @@ impl Debouncer {
 pub struct Indexer {
     recv_indexer_signal: UnboundedReceiver<()>,
     file_events: Arc<Mutex<Vec<FsEvent>>>,
+    pub not_commited_file_indexer: Arc<NotCommitedFilesIndexer>,
 }
 
 impl Indexer {
     fn new(
         recv_indexer_signal: UnboundedReceiver<()>,
         file_events: Arc<Mutex<Vec<FsEvent>>>,
+        repo_path: PathBuf,
     ) -> Self {
         Self {
             recv_indexer_signal,
             file_events,
+            not_commited_file_indexer: Arc::new(
+                NotCommitedFilesIndexer::new(&repo_path).unwrap(),
+            ),
         }
     }
 
@@ -228,8 +239,14 @@ impl Indexer {
 
             modified_files.extend(created_files.drain());
 
+            let not_committed_indexer = self.not_commited_file_indexer.clone();
             tokio::task::spawn_blocking(move || {
                 println!("Modified paths: {:?}", modified_files);
+                not_committed_indexer
+                    .reindex_files(
+                        &modified_files.into_iter().collect::<Vec<_>>(),
+                    )
+                    .unwrap();
             });
         }
     }
