@@ -62,7 +62,6 @@ fn main() -> io::Result<()> {
 
     if args.debug {
         handle_query(&mut searcher).unwrap();
-
         Ok(())
     } else {
         let mut terminal = ratatui::init();

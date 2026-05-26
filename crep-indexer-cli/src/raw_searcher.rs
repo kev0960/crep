@@ -13,7 +13,10 @@ pub fn handle_query(searcher: &mut Searcher) -> anyhow::Result<()> {
 
         let query = string_to_query(query);
 
-        let results = searcher.handle_query(&query)?;
+        let results = searcher.handle_query(&query).unwrap_or_else(|e| {
+            println!("Error: {:?}", e);
+            vec![]
+        });
 
         let mut lines: Vec<String> = vec![];
 

@@ -77,6 +77,9 @@ impl<'a> Searcher<'a> {
         }
 
         let raw_results = raw_results.unwrap();
+        if raw_results.is_empty() {
+            return Ok(vec![]);
+        }
 
         let to_search_result_start = Instant::now();
         let results = raw_results
