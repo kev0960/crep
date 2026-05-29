@@ -101,6 +101,7 @@ impl Document {
                 );
 
                 word_index.word_history.clear();
+                word_index.commit_inclutivity.optimize();
             }
         }
 
@@ -134,6 +135,8 @@ impl Document {
                         .insert((commit_index - 1) as u32);
                 }
             }
+
+            word_index.commit_inclutivity.optimize();
         }
     }
 
@@ -154,6 +157,8 @@ impl Document {
                         index.commit_inclutivity.insert(commit_index as u32);
                     }
                 }
+
+                index.commit_inclutivity.optimize();
             }
         }
 
