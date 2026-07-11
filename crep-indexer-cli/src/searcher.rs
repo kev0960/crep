@@ -89,7 +89,7 @@ impl<'a> Searcher<'a> {
                     repo: self
                         .pool
                         .repos
-                        .get(rayon::current_thread_index().unwrap())
+                        .get(rayon::current_thread_index().unwrap_or_default())
                         .unwrap()
                         .clone(),
                     file_id_to_path: &self.index.file_id_to_path,

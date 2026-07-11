@@ -185,6 +185,8 @@ impl GitIndexer {
             }
         }
 
+        trace!("Index {:#?}", self.file_id_to_document);
+
         Ok(())
     }
 

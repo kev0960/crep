@@ -124,8 +124,10 @@ pub fn find_all_words_containing_key(
 ) -> Vec<String> {
     let escaped_word = regex::escape(key);
     let pattern = match key.len() {
-        2 => format!("{escaped_word}.|.{escaped_word}"),
-        1 => format!("{escaped_word}..|.{escaped_word}.|..{escaped_word}"),
+        2 => format!("{escaped_word}.|.{escaped_word}|{escaped_word}"),
+        1 => format!(
+            "{escaped_word}..|.{escaped_word}.|..{escaped_word}|.{escaped_word}|{escaped_word}.|{escaped_word}"
+        ),
         _ => panic!("Should not happen {key}"),
     };
 

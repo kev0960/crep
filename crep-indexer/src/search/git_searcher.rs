@@ -281,6 +281,10 @@ impl<'i> GitSearcher<'i> {
                     })
                     .collect::<Vec<_>>();
 
+            if docs.is_empty() {
+                return None;
+            }
+
             let overlaps = union_bitmaps(&docs).unwrap();
             return Some((w, overlaps));
         }
