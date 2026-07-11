@@ -122,15 +122,63 @@ pub fn find_all_words_containing_key(
     key: &str,
     all_words: &Set<Vec<u8>>,
 ) -> Vec<String> {
-    let escaped_word = regex::escape(key);
-    let pattern = match key.len() {
-        2 => format!("{escaped_word}.|.{escaped_word}|{escaped_word}"),
-        1 => format!(
-            "{escaped_word}..|.{escaped_word}.|..{escaped_word}|.{escaped_word}|{escaped_word}.|{escaped_word}"
-        ),
-        _ => panic!("Should not happen {key}"),
-    };
+    let pattern = format!(".*{}.*", regex::escape(key));
 
     let dfa = dense::Builder::new().build(&pattern).unwrap();
     all_words.search(dfa).into_stream().into_strs().unwrap()
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn build_set(words: &[&str]) -> Set<Vec<u8>> {
+        assert!(
+            words.windows(2).all(|w| w[0] < w[1]),
+            "fixture words must be sorted and unique: {words:?}"
+        );
+        Set::from_iter(words.iter()).unwrap()
+    }
+
+    #[test]
+    fn test_two_char_key_matches_substrings() {
+        let all_words =
+            build_set(&["a", "ab", "abc", "bca", "cab", "xyz", "zab"]);
+
+        let mut result = find_all_words_containing_key("ab", &all_words);
+        result.sort();
+
+        assert_eq!(result, vec!["ab", "abc", "cab", "zab"]);
+    }
+
+    #[test]
+    fn test_two_char_key_no_match() {
+        let all_words = build_set(&["bca", "xyz"]);
+
+        let result = find_all_words_containing_key("ab", &all_words);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_single_char_key_matches_all_positions() {
+        let all_words = build_set(&[
+            "a", "ab", "abc", "ba", "bac", "bca", "xy", "xya", "xyz",
+        ]);
+
+        let mut result = find_all_words_containing_key("a", &all_words);
+        result.sort();
+
+        assert_eq!(result, vec!["a", "ab", "abc", "ba", "bac", "bca", "xya"]);
+    }
+
+    #[test]
+    fn test_key_is_regex_escaped() {
+        let all_words = build_set(&[".b", "a.", "axb", "x."]);
+
+        let mut result = find_all_words_containing_key(".", &all_words);
+        result.sort();
+
+        assert_eq!(result, vec![".b", "a.", "x."]);
+    }
 }
