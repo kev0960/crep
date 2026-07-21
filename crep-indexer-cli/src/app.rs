@@ -24,7 +24,6 @@ use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::RwLock;
 use std::sync::mpsc;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
@@ -45,7 +44,10 @@ pub enum QueryType {
 }
 
 pub struct App<'a> {
-    state: RwLock<State>,
+    state: State,
+    prev_query_type: Option<QueryType>,
+
+    scroll_y: u16,
     searcher: Arc<Mutex<Searcher<'a>>>,
     input: Input,
 
@@ -78,7 +80,9 @@ impl<'a> App<'a> {
         let (search_send, search_recv) = channel();
 
         Self {
-            state: RwLock::new(State::Input(QueryType::RawString)),
+            state: State::Input(QueryType::RawString),
+            prev_query_type: None,
+            scroll_y: 0,
             input: Input::default(),
             searcher: Arc::new(Mutex::new(searcher)),
             ui_send,
@@ -147,11 +151,8 @@ impl<'a> App<'a> {
             });
 
             loop {
-                {
-                    let state = self.state.read().unwrap();
-                    if *state == State::Terminate {
-                        break;
-                    }
+                if self.state == State::Terminate {
+                    break;
                 }
 
                 terminal.draw(|frame| self.render(frame)).unwrap();
@@ -177,23 +178,24 @@ impl<'a> App<'a> {
     }
 
     fn handle_event(&mut self, event: Event) -> io::Result<()> {
-        let state = {
-            let state = self.state.read().unwrap();
-            *state
-        };
+        let state = self.state;
+
+        if let State::Input(q) = state {
+            self.prev_query_type = Some(q);
+        }
 
         if let Event::Key(key_event) = event {
             if key_event.code == KeyCode::Esc {
                 match state {
                     State::Control => {
-                        *self.state.write().unwrap() = State::Terminate;
+                        self.state = State::Terminate;
                         self.ui_send.send(Message::Terminate).unwrap();
                         self.search_send
                             .send(SearchMessage::Terminate)
                             .unwrap();
                     }
                     State::Input(_) => {
-                        *self.state.write().unwrap() = State::Control;
+                        self.state = State::Control;
                     }
                     State::Terminate => { /* Ignore */ }
                 }
@@ -206,15 +208,25 @@ impl<'a> App<'a> {
                 match state {
                     State::Control => {
                         if key_event.code == KeyCode::Char('i') {
-                            *self.state.write().unwrap() =
-                                State::Input(QueryType::RawString);
+                            self.state = State::Input(QueryType::RawString);
                         } else if key_event.code == KeyCode::Char('r') {
-                            *self.state.write().unwrap() =
-                                State::Input(QueryType::Regex);
+                            self.state = State::Input(QueryType::Regex);
+                        } else if key_event.code == KeyCode::Char('n') {
+                            self.scroll_y = self.scroll_y.saturating_add(5);
+                        } else if key_event.code == KeyCode::Char('p') {
+                            self.scroll_y = self.scroll_y.saturating_sub(5);
+                        } else if key_event.code == KeyCode::Char('q') {
+                            if let Some(q) = self.prev_query_type {
+                                self.state = State::Input(q);
+                            } else {
+                                self.state = State::Input(QueryType::RawString);
+                            }
                         }
                     }
                     State::Input(query_type) => {
                         self.input.handle_event(&event);
+                        self.scroll_y = 0;
+
                         match query_type {
                             QueryType::Regex => {
                                 self.search_send
@@ -351,15 +363,17 @@ impl<'a> App<'a> {
             lines.push(Line::raw(""));
         }
 
-        frame.render_widget(Paragraph::new(lines), area);
+        frame.render_widget(
+            Paragraph::new(lines).scroll((self.scroll_y, 0)),
+            area,
+        );
     }
 
     fn render_status(&self, frame: &mut Frame, area: Rect) {
-        let state = self.state.read().unwrap();
-        match *state {
+        match self.state {
             State::Control => {
                 frame.render_widget(
-                    Paragraph::new("Use ESC to terminate. i: String search. r: Regex search")
+                    Paragraph::new("Use ESC to terminate. i: String search. r: Regex search. p: prev. n: next. q: back to previous query mode")
                         .style(Style::default().fg(Color::Yellow)),
                     area,
                 );
