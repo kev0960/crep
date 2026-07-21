@@ -1,5 +1,6 @@
 use crate::git::diff::FileDiffTracker;
 use crate::git::diff::LineDeleteResult;
+use crate::index::git_index::GitIndex;
 use crate::index::git_index_debug::IndexDebugStats;
 use ahash::AHashMap;
 use ahash::AHashSet;
@@ -80,6 +81,20 @@ impl GitIndexer {
         }
     }
 
+    pub fn from_index(index: GitIndex, main_branch: &str) -> Self {
+        Self {
+            utf8_file_checker: Utf8FileChecker::new().unwrap(),
+            commit_index_to_commit_id: Vec::new(),
+            commit_id_to_commit_index: AHashMap::new(),
+            file_name_to_id: AHashMap::new(),
+            file_id_to_path: Vec::new(),
+            file_id_to_diff_tracker: AHashMap::new(),
+            file_id_to_document: index.file_id_to_document,
+            word_to_file_id_ever_contained: index
+                .word_to_file_id_ever_contained,
+        }
+    }
+
     fn get_file_id_insert_if_missing(
         &mut self,
         file_full_path: &str,
@@ -103,12 +118,19 @@ impl GitIndexer {
         revwalk.simplify_first_parent()?;
         revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::REVERSE)?;
 
-        let mut last_tree: Option<Tree> = None;
+        let last_indexed_commit =
+            if let Some(last_commit) = self.commit_index_to_commit_id.last() {
+                Some(Oid::from_bytes(last_commit)?)
+            } else {
+                None
+            };
+
         let bar = match self.config.show_index_progress {
             true => {
                 let num_commits = count_number_of_commits(
                     &repo,
                     &self.config.main_branch_name,
+                    last_indexed_commit,
                 )?;
 
                 let bar = ProgressBar::new(num_commits as u64);
@@ -120,6 +142,15 @@ impl GitIndexer {
             }
             false => None,
         };
+
+        let mut last_tree: Option<Tree> = None;
+        if let Some(last_indexed_commit) = last_indexed_commit {
+            revwalk.push(last_indexed_commit)?;
+            last_tree = Some(repo.find_commit(last_indexed_commit)?.tree()?);
+
+            // Revwalk should starting from the next one.
+            revwalk.next();
+        }
 
         for old_result in revwalk {
             let old = old_result?;
@@ -686,13 +717,18 @@ fn flatten_delete_result(delete_results: &[LineDeleteResult]) -> Vec<WordKey> {
 fn count_number_of_commits(
     repo: &Repository,
     main_branch_name: &str,
+    start_commit: Option<Oid>,
 ) -> Result<usize> {
     let mut revwalk = repo.revwalk()?;
 
-    revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+    revwalk.set_sorting(Sort::TOPOLOGICAL)?;
     revwalk.push_ref(&format!("refs/heads/{main_branch_name}"))?;
 
     revwalk.simplify_first_parent()?;
+
+    if let Some(start_commit) = start_commit {
+        revwalk.push(start_commit)?;
+    }
 
     Ok(revwalk.count())
 }

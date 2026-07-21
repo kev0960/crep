@@ -16,6 +16,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use trigram_hash::trigram_hash::TrigramKey;
 
+use crate::index::git_indexer::GitIndexerConfig;
+
 use super::document::Document;
 use super::git_index_serialization::GitIndexSerialization;
 use super::git_indexer::CommitIndex;

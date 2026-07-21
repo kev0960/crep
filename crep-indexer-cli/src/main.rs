@@ -42,6 +42,9 @@ struct Args {
 
     #[arg(long)]
     save_only: bool,
+
+    #[arg(short)]
+    continue_index: bool,
 }
 
 fn main() -> io::Result<()> {
@@ -76,7 +79,13 @@ fn main() -> io::Result<()> {
 
 fn build_index(args: &Args) -> GitIndex {
     match &args.load_path {
-        Some(load_path) => GitIndex::load(Path::new(&load_path)).unwrap(),
+        Some(load_path) => {
+            let indexer = GitIndex::load(Path::new(&load_path)).unwrap();
+
+            let repo = git2::Repository::open(Path::new(&args.path)).unwrap();
+
+            indexer
+        }
         _ => {
             let mut indexer = GitIndexer::new(GitIndexerConfig {
                 show_index_progress: true,
