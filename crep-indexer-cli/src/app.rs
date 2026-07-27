@@ -188,11 +188,11 @@ impl<'a> App<'a> {
             if key_event.code == KeyCode::Esc {
                 match state {
                     State::Control => {
-                        self.state = State::Terminate;
-                        self.ui_send.send(Message::Terminate).unwrap();
-                        self.search_send
-                            .send(SearchMessage::Terminate)
-                            .unwrap();
+                        if let Some(q) = self.prev_query_type {
+                            self.state = State::Input(q);
+                        } else {
+                            self.state = State::Input(QueryType::RawString);
+                        }
                     }
                     State::Input(_) => {
                         self.state = State::Control;
@@ -211,16 +211,16 @@ impl<'a> App<'a> {
                             self.state = State::Input(QueryType::RawString);
                         } else if key_event.code == KeyCode::Char('r') {
                             self.state = State::Input(QueryType::Regex);
-                        } else if key_event.code == KeyCode::Char('n') {
+                        } else if key_event.code == KeyCode::Char('j') {
                             self.scroll_y = self.scroll_y.saturating_add(5);
-                        } else if key_event.code == KeyCode::Char('p') {
+                        } else if key_event.code == KeyCode::Char('k') {
                             self.scroll_y = self.scroll_y.saturating_sub(5);
                         } else if key_event.code == KeyCode::Char('q') {
-                            if let Some(q) = self.prev_query_type {
-                                self.state = State::Input(q);
-                            } else {
-                                self.state = State::Input(QueryType::RawString);
-                            }
+                            self.state = State::Terminate;
+                            self.ui_send.send(Message::Terminate).unwrap();
+                            self.search_send
+                                .send(SearchMessage::Terminate)
+                                .unwrap();
                         }
                     }
                     State::Input(query_type) => {
@@ -373,7 +373,7 @@ impl<'a> App<'a> {
         match self.state {
             State::Control => {
                 frame.render_widget(
-                    Paragraph::new("Use ESC to terminate. i: String search. r: Regex search. p: prev. n: next. q: back to previous query mode")
+                    Paragraph::new("Use q to terminate. i: String search. r: Regex search. k: prev. j: next. ESC: back to previous query mode")
                         .style(Style::default().fg(Color::Yellow)),
                     area,
                 );
