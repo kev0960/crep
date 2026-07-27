@@ -1,7 +1,7 @@
 use crate::git::diff::FileDiffTracker;
 use crate::git::diff::LineDeleteResult;
-use crate::index::git_index::GitIndex;
 use crate::index::git_index_debug::IndexDebugStats;
+use crate::index::git_index_serialization::GitIndexSerialization;
 use ahash::AHashMap;
 use ahash::AHashSet;
 use anyhow::Result;
@@ -38,9 +38,9 @@ pub struct GitIndexer {
     pub commit_index_to_commit_id: Vec<[u8; 20]>,
     pub commit_id_to_commit_index: AHashMap<[u8; 20], CommitIndex>,
 
-    file_name_to_id: AHashMap<String, FileId>,
+    pub file_name_to_id: AHashMap<String, FileId>,
     pub file_id_to_path: Vec<String>,
-    file_id_to_diff_tracker: AHashMap<FileId, FileDiffTracker>,
+    pub file_id_to_diff_tracker: AHashMap<FileId, FileDiffTracker>,
 
     pub file_id_to_document: AHashMap<FileId, Document>,
 
@@ -49,7 +49,7 @@ pub struct GitIndexer {
 
     utf8_file_checker: Utf8FileChecker,
 
-    ignored_non_utf8_file_path_set: AHashSet<String>,
+    pub ignored_non_utf8_file_path_set: AHashSet<String>,
 }
 
 #[derive(Debug)]
@@ -81,17 +81,37 @@ impl GitIndexer {
         }
     }
 
-    pub fn from_index(index: GitIndex, main_branch: &str) -> Self {
+    pub fn from_saved(
+        index: GitIndexSerialization,
+        config: GitIndexerConfig,
+    ) -> Self {
+        let commit_id_to_commit_index = index
+            .commit_index_to_commit_id
+            .iter()
+            .enumerate()
+            .map(|(index, commit_id)| (*commit_id, index))
+            .collect::<AHashMap<_, _>>();
+
+        let file_name_to_id = index
+            .file_id_to_path
+            .iter()
+            .enumerate()
+            .map(|(id, path)| (path.clone(), id))
+            .collect::<AHashMap<_, _>>();
+
         Self {
+            config,
             utf8_file_checker: Utf8FileChecker::new().unwrap(),
-            commit_index_to_commit_id: Vec::new(),
-            commit_id_to_commit_index: AHashMap::new(),
-            file_name_to_id: AHashMap::new(),
-            file_id_to_path: Vec::new(),
-            file_id_to_diff_tracker: AHashMap::new(),
+            commit_index_to_commit_id: index.commit_index_to_commit_id,
+            commit_id_to_commit_index,
+            file_name_to_id,
+            file_id_to_path: index.file_id_to_path,
+            file_id_to_diff_tracker: index.file_id_to_diff_tracker,
             file_id_to_document: index.file_id_to_document,
             word_to_file_id_ever_contained: index
                 .word_to_file_id_ever_contained,
+            ignored_non_utf8_file_path_set: index
+                .ignored_non_utf8_file_path_set,
         }
     }
 

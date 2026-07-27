@@ -9,6 +9,8 @@ use std::path::Path;
 use app::App;
 use clap::Parser;
 use crep_indexer::index::git_index::GitIndex;
+use crep_indexer::index::git_index_serialization::GitIndexSerialization;
+use crep_indexer::index::git_index_serialization::GitIndexSerializationRef;
 use crep_indexer::index::git_indexer::GitIndexer;
 use crep_indexer::index::git_indexer::GitIndexerConfig;
 
@@ -78,34 +80,42 @@ fn main() -> io::Result<()> {
 }
 
 fn build_index(args: &Args) -> GitIndex {
-    match &args.load_path {
-        Some(load_path) => {
-            let indexer = GitIndex::load(Path::new(&load_path)).unwrap();
+    let config = GitIndexerConfig {
+        show_index_progress: true,
+        main_branch_name: args
+            .main_branch
+            .as_deref()
+            .unwrap_or("main")
+            .to_owned(),
+        ignore_utf8_error: true,
+    };
 
-            let repo = git2::Repository::open(Path::new(&args.path)).unwrap();
+    let repo = git2::Repository::open(Path::new(&args.path)).unwrap();
+    let indexer = match &args.load_path {
+        Some(load_path) => {
+            let serialized =
+                GitIndexSerialization::load(Path::new(&load_path)).unwrap();
+            let mut indexer = GitIndexer::from_saved(serialized, config);
+
+            if args.continue_index {
+                indexer.index_history(repo).unwrap();
+            }
 
             indexer
         }
         _ => {
-            let mut indexer = GitIndexer::new(GitIndexerConfig {
-                show_index_progress: true,
-                main_branch_name: args
-                    .main_branch
-                    .as_deref()
-                    .unwrap_or("main")
-                    .to_owned(),
-                ignore_utf8_error: true,
-            });
-
-            let repo = git2::Repository::open(Path::new(&args.path)).unwrap();
+            let mut indexer = GitIndexer::new(config);
             indexer.index_history(repo).unwrap();
-
-            let index = GitIndex::build(indexer);
-            if let Some(save_path) = &args.save_path {
-                index.save(std::path::Path::new(&save_path)).unwrap();
-            }
-
-            index
+            indexer
         }
+    };
+
+    if let Some(save_path) = &args.save_path {
+        let serialized: GitIndexSerializationRef = (&indexer).into();
+        serialized.save(std::path::Path::new(&save_path)).unwrap();
     }
+
+    let index: GitIndex = indexer.into();
+
+    index
 }

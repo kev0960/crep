@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crep_indexer::index::git_index::GitIndex;
+use crep_indexer::index::git_index_serialization::GitIndexSerialization;
+use crep_indexer::index::git_indexer::{GitIndexer, GitIndexerConfig};
 
 use crate::config::ServerConfig;
 use crate::search::repo_pool::RepoPool;
@@ -17,10 +19,20 @@ pub struct ServerContext {
 
 impl ServerContext {
     pub fn new(config: &ServerConfig) -> anyhow::Result<Self> {
-        let index = GitIndex::load(&PathBuf::from(&config.saved_index_path))?;
+        let serialized = GitIndexSerialization::load(&PathBuf::from(
+            &config.saved_index_path,
+        ))?;
+
+        let index_config = GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: true,
+        };
+
+        let indexer = GitIndexer::from_saved(serialized, index_config);
 
         Ok(Self {
-            index: Arc::new(index),
+            index: Arc::new(indexer.into()),
             repo_pool: Arc::new(RepoPool::new(&config.repo_path)),
             search_cache: Arc::new(SearchCache::new(
                 NonZeroUsize::new(1024).unwrap(),
