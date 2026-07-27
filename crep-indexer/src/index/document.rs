@@ -17,7 +17,7 @@ pub struct WordKey {
     pub line: usize,
 }
 
-#[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WordIndex {
     pub word_history: AHashSet<WordKey>,
 
@@ -25,7 +25,7 @@ pub struct WordIndex {
     pub commit_inclutivity: RoaringBitmap,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct Document {
     pub words: AHashMap<TrigramKey, WordIndex>,
 

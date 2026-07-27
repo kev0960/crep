@@ -1,6 +1,7 @@
 use crate::git::diff::FileDiffTracker;
 use crate::git::diff::LineDeleteResult;
 use crate::index::git_index_debug::IndexDebugStats;
+use crate::index::git_index_serialization::GitIndexSerialization;
 use ahash::AHashMap;
 use ahash::AHashSet;
 use anyhow::Result;
@@ -37,9 +38,9 @@ pub struct GitIndexer {
     pub commit_index_to_commit_id: Vec<[u8; 20]>,
     pub commit_id_to_commit_index: AHashMap<[u8; 20], CommitIndex>,
 
-    file_name_to_id: AHashMap<String, FileId>,
+    pub file_name_to_id: AHashMap<String, FileId>,
     pub file_id_to_path: Vec<String>,
-    file_id_to_diff_tracker: AHashMap<FileId, FileDiffTracker>,
+    pub file_id_to_diff_tracker: AHashMap<FileId, FileDiffTracker>,
 
     pub file_id_to_document: AHashMap<FileId, Document>,
 
@@ -48,7 +49,7 @@ pub struct GitIndexer {
 
     utf8_file_checker: Utf8FileChecker,
 
-    ignored_non_utf8_file_path_set: AHashSet<String>,
+    pub ignored_non_utf8_file_path_set: AHashSet<String>,
 }
 
 #[derive(Debug)]
@@ -57,7 +58,7 @@ struct CurrentGitDiffFile {
     status: Delta,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct GitIndexerConfig {
     pub show_index_progress: bool,
     pub main_branch_name: String,
@@ -77,6 +78,40 @@ impl GitIndexer {
             file_id_to_document: AHashMap::new(),
             word_to_file_id_ever_contained: AHashMap::new(),
             ignored_non_utf8_file_path_set: AHashSet::new(),
+        }
+    }
+
+    pub fn from_saved(
+        index: GitIndexSerialization,
+        config: GitIndexerConfig,
+    ) -> Self {
+        let commit_id_to_commit_index = index
+            .commit_index_to_commit_id
+            .iter()
+            .enumerate()
+            .map(|(index, commit_id)| (*commit_id, index))
+            .collect::<AHashMap<_, _>>();
+
+        let file_name_to_id = index
+            .file_id_to_path
+            .iter()
+            .enumerate()
+            .map(|(id, path)| (path.clone(), id))
+            .collect::<AHashMap<_, _>>();
+
+        Self {
+            config,
+            utf8_file_checker: Utf8FileChecker::new().unwrap(),
+            commit_index_to_commit_id: index.commit_index_to_commit_id,
+            commit_id_to_commit_index,
+            file_name_to_id,
+            file_id_to_path: index.file_id_to_path,
+            file_id_to_diff_tracker: index.file_id_to_diff_tracker,
+            file_id_to_document: index.file_id_to_document,
+            word_to_file_id_ever_contained: index
+                .word_to_file_id_ever_contained,
+            ignored_non_utf8_file_path_set: index
+                .ignored_non_utf8_file_path_set,
         }
     }
 
@@ -103,12 +138,19 @@ impl GitIndexer {
         revwalk.simplify_first_parent()?;
         revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::REVERSE)?;
 
-        let mut last_tree: Option<Tree> = None;
+        let last_indexed_commit =
+            if let Some(last_commit) = self.commit_index_to_commit_id.last() {
+                Some(Oid::from_bytes(last_commit)?)
+            } else {
+                None
+            };
+
         let bar = match self.config.show_index_progress {
             true => {
                 let num_commits = count_number_of_commits(
                     &repo,
                     &self.config.main_branch_name,
+                    last_indexed_commit,
                 )?;
 
                 let bar = ProgressBar::new(num_commits as u64);
@@ -120,6 +162,13 @@ impl GitIndexer {
             }
             false => None,
         };
+
+        let mut last_tree: Option<Tree> = None;
+        if let Some(last_indexed_commit) = last_indexed_commit {
+            // Mark the current commit and its ancestors not interested.
+            revwalk.hide(last_indexed_commit)?;
+            last_tree = Some(repo.find_commit(last_indexed_commit)?.tree()?);
+        }
 
         for old_result in revwalk {
             let old = old_result?;
@@ -686,13 +735,18 @@ fn flatten_delete_result(delete_results: &[LineDeleteResult]) -> Vec<WordKey> {
 fn count_number_of_commits(
     repo: &Repository,
     main_branch_name: &str,
+    start_commit: Option<Oid>,
 ) -> Result<usize> {
     let mut revwalk = repo.revwalk()?;
 
-    revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
+    revwalk.set_sorting(Sort::TOPOLOGICAL)?;
     revwalk.push_ref(&format!("refs/heads/{main_branch_name}"))?;
 
     revwalk.simplify_first_parent()?;
+
+    if let Some(start_commit) = start_commit {
+        revwalk.push(start_commit)?;
+    }
 
     Ok(revwalk.count())
 }
@@ -724,7 +778,10 @@ struct GitDelta {
 
 #[cfg(test)]
 mod index_tree {
-    use crate::index::document::WordIndex;
+    use crate::index::{
+        document::WordIndex, git_index_serialization::GitIndexSerializationRef,
+    };
+    use bincode::serde;
 
     use super::*;
 
@@ -1593,5 +1650,180 @@ mod index_tree {
                 )
             ])
         );
+    }
+
+    #[test]
+    fn continue_indexing() {
+        let config = GitIndexerConfig {
+            show_index_progress: false,
+            main_branch_name: "main".to_owned(),
+            ignore_utf8_error: false,
+        };
+
+        let mut indexer = GitIndexer::new(config.clone());
+
+        let repo = init_repo();
+        let repo_path = repo.path();
+
+        std::fs::write(repo_path.join("file.txt"), "1").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "init"]);
+
+        std::fs::write(repo_path.join("file2.txt"), "2").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "second"]);
+
+        indexer
+            .index_history(Repository::open(repo_path).unwrap())
+            .unwrap();
+
+        {
+            let all = RoaringBitmap::from_sorted_iter(0..2).unwrap();
+            let last_one = RoaringBitmap::from_sorted_iter(1..2).unwrap();
+            pretty_assertions::assert_eq!(
+                indexer.file_id_to_document,
+                AHashMap::from([
+                    (
+                        0,
+                        Document {
+                            words: AHashMap::from([(
+                                "1".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 0,
+                                            line: 0
+                                        },
+                                    ]),
+                                    commit_inclutivity: all.clone()
+                                }
+                            ),]),
+                            all_words: Some(
+                                fst::Set::from_iter(["1"]).unwrap()
+                            ),
+                            doc_modified_commits: RoaringBitmap::from_iter([0]),
+                            is_deleted: false
+                        }
+                    ),
+                    (
+                        1,
+                        Document {
+                            words: AHashMap::from([(
+                                "2".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 1,
+                                            line: 0
+                                        },
+                                    ]),
+                                    commit_inclutivity: last_one.clone()
+                                }
+                            ),]),
+                            all_words: Some(
+                                fst::Set::from_iter(["2"]).unwrap()
+                            ),
+                            doc_modified_commits: RoaringBitmap::from_iter([1]),
+                            is_deleted: false
+                        }
+                    ),
+                ])
+            );
+        }
+
+        std::fs::remove_file(repo_path.join("file.txt")).unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "third"]);
+
+        std::fs::write(repo_path.join("file3.txt"), "3").unwrap();
+        run(repo_path, &["git", "add", "."]);
+        run(repo_path, &["git", "commit", "-m", "fourth"]);
+
+        indexer
+            .index_history(Repository::open(repo_path).unwrap())
+            .unwrap();
+
+        {
+            assert_eq!(
+                indexer.file_id_to_path,
+                vec![
+                    "file.txt".to_owned(),
+                    "file2.txt".to_owned(),
+                    "file3.txt".to_owned()
+                ]
+            );
+
+            pretty_assertions::assert_eq!(
+                indexer.file_id_to_document,
+                AHashMap::from([
+                    (
+                        0,
+                        Document {
+                            words: AHashMap::from([(
+                                "1".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([]),
+                                    commit_inclutivity:
+                                        RoaringBitmap::from_iter(0..2)
+                                }
+                            ),]),
+                            all_words: Some(
+                                fst::Set::from_iter(["1"]).unwrap()
+                            ),
+                            doc_modified_commits: RoaringBitmap::from_iter([
+                                0, 2
+                            ]),
+                            is_deleted: true
+                        }
+                    ),
+                    (
+                        1,
+                        Document {
+                            words: AHashMap::from([(
+                                "2".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 1,
+                                            line: 0
+                                        },
+                                    ]),
+                                    commit_inclutivity:
+                                        RoaringBitmap::from_iter([1, 2, 3])
+                                }
+                            ),]),
+                            all_words: Some(
+                                fst::Set::from_iter(["2"]).unwrap()
+                            ),
+                            doc_modified_commits: RoaringBitmap::from_iter([1]),
+                            is_deleted: false
+                        }
+                    ),
+                    (
+                        2,
+                        Document {
+                            words: AHashMap::from([(
+                                "3".into(),
+                                WordIndex {
+                                    word_history: AHashSet::from_iter([
+                                        WordKey {
+                                            commit_id: 3,
+                                            line: 0
+                                        },
+                                    ]),
+                                    commit_inclutivity:
+                                        RoaringBitmap::from_iter([3])
+                                }
+                            ),]),
+                            all_words: Some(
+                                fst::Set::from_iter(["3"]).unwrap()
+                            ),
+                            doc_modified_commits: RoaringBitmap::from_iter([3]),
+                            is_deleted: false
+                        }
+                    ),
+                ])
+            );
+        }
     }
 }
