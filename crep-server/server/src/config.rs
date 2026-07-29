@@ -5,7 +5,20 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct ServerConfig {
     pub repo_path: String,
+    pub live_index_config: Option<LiveIndexConfig>,
+
     pub saved_index_path: String,
+}
+
+#[derive(Deserialize)]
+pub enum LiveIndexConfig {
+    WatchLiveUpdate(WatcherConfig),
+    OnWebhookNotify,
+}
+
+#[derive(Deserialize)]
+pub struct WatcherConfig {
+    pub debounce_seconds: u64,
 }
 
 impl ServerConfig {

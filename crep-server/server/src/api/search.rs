@@ -100,9 +100,9 @@ pub async fn search(
         return Err(ApiError::bad_request("query must not be empty"));
     }
 
-    let index = &context.index;
+    let index_guard = context.indexer.get_search_index().await;
 
-    let searcher = GitSearcher::new(index);
+    let searcher = GitSearcher::new(index_guard.as_index_ref());
     let option = Some(SearchOption {
         max_num_to_find: None,
     });
@@ -168,10 +168,12 @@ pub async fn search(
     );
 
     let repo_pool = context.repo_pool.clone();
-    let index_cloned = context.index.clone();
+    let index_guard_cloned = index_guard.clone();
 
     let conversion_start = Instant::now();
     let result = tokio::task::spawn_blocking(move || {
+        let index = index_guard_cloned.as_index_ref();
+
         results
             .into_par_iter()
             .map_init(
@@ -181,9 +183,8 @@ pub async fn search(
                         .get(rayon::current_thread_index().unwrap())
                         .unwrap()
                         .clone(),
-                    file_id_to_path: &index_cloned.file_id_to_path,
-                    commit_index_to_commit_id: &index_cloned
-                        .commit_index_to_commit_id,
+                    file_id_to_path: index.file_id_to_path,
+                    commit_index_to_commit_id: index.commit_index_to_commit_id,
                 },
                 |reader, result| match result {
                     CacheResult::Hit(search_res) => {
@@ -259,7 +260,7 @@ pub async fn search(
             if let Some(result) = c.result {
                 SearchHit::from_search_result(
                     &repo,
-                    &index.commit_index_to_commit_id,
+                    index_guard.as_index_ref().commit_index_to_commit_id,
                     result,
                 )
                 .map(Some)

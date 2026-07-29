@@ -536,6 +536,7 @@ dependencies = [
  "chrono",
  "clap",
  "crep-indexer",
+ "fst",
  "git2",
  "hex",
  "ignore",

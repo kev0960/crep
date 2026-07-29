@@ -6,6 +6,8 @@ use axum::routing::post;
 
 pub mod api;
 pub mod config;
+pub mod indexer;
+pub mod init;
 mod search;
 pub mod server_context;
 pub mod watch;

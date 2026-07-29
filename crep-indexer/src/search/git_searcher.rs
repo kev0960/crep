@@ -9,7 +9,7 @@ use regex_syntax::hir::HirKind;
 use roaring::RoaringBitmap;
 use trigram_hash::trigram_hash::split_lines_to_token_set;
 
-use crate::index::git_index::GitIndex;
+use crate::index::git_index::GitIndexRef;
 use crate::index::git_indexer::FileId;
 use crate::search::core::search_docs::find_all_words_containing_key;
 use crate::search::core::search_docs::find_matching_commit_histories_in_doc;
@@ -25,7 +25,7 @@ use super::regex_search::SearchPartTrigram;
 use super::regex_search::Trigram;
 
 pub struct GitSearcher<'i> {
-    index: &'i GitIndex,
+    index: GitIndexRef<'i>,
 }
 
 #[derive(Default)]
@@ -40,7 +40,7 @@ pub enum Query {
 }
 
 impl<'i> GitSearcher<'i> {
-    pub fn new(index: &'i GitIndex) -> Self {
+    pub fn new(index: GitIndexRef<'i>) -> Self {
         Self { index }
     }
 
@@ -272,7 +272,7 @@ impl<'i> GitSearcher<'i> {
 
         if word.len() <= 2 {
             let docs =
-                find_all_words_containing_key(word, &self.index.all_words)
+                find_all_words_containing_key(word, self.index.all_words)
                     .into_iter()
                     .filter_map(|word| {
                         self.index

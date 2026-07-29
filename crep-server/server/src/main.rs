@@ -1,15 +1,18 @@
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use axum::serve;
 use clap::Parser;
+use crep_indexer::index::git_index_serialization::GitIndexSerialization;
+use crep_indexer::index::git_indexer::GitIndexer;
+use crep_indexer::index::git_indexer::GitIndexerConfig;
 use crep_server::config::ServerConfig;
+use crep_server::init::init_watcher_and_indexer;
 use crep_server::router;
 use crep_server::server_context::ServerContext;
 use crep_server::watch::ignore_checker::IgnoreChecker;
-use crep_server::watch::repo_watcher::WatcherConfig;
-use crep_server::watch::repo_watcher::init_watcher_and_indexer;
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
@@ -47,13 +50,25 @@ async fn main() -> anyhow::Result<()> {
     info!("Start setting up Repo indexer...");
     let repo_indexer_start_time = Instant::now();
     let ignore_checker = IgnoreChecker::new(&config.repo_path);
-    let (mut watcher, indexer) = init_watcher_and_indexer(WatcherConfig {
-        debounce_seconds: 10,
-    });
-    indexer.start();
+
+    let serialized =
+        GitIndexSerialization::load(&PathBuf::from(&config.saved_index_path))?;
+
+    let index_config = GitIndexerConfig {
+        show_index_progress: false,
+        main_branch_name: "main".to_owned(),
+        ignore_utf8_error: true,
+    };
+
+    let git_indexer = GitIndexer::from_saved(serialized, index_config);
+
+    let (indexer, watcher) = init_watcher_and_indexer(&config, git_indexer);
+
+    /*
     watcher
         .start_watch(Path::new(&config.repo_path), ignore_checker)
         .expect("Unable to start the watch!");
+    */
     info!(
         "Setting up the repo watcher complete. Took {}s",
         Instant::now()
@@ -64,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
     let server_init_start_time = Instant::now();
     info!("Start building the server context...");
 
-    let context = ServerContext::new(&config)?;
+    let context = ServerContext::new(&config, Arc::new(indexer))?;
 
     let app = router(context);
     let addr: SocketAddr = std::env::var("BIND_ADDR")

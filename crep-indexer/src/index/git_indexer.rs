@@ -778,9 +778,8 @@ struct GitDelta {
 
 #[cfg(test)]
 mod index_tree {
-    use crate::index::{
-        document::WordIndex, git_index_serialization::GitIndexSerializationRef,
-    };
+    use crate::index::document::WordIndex;
+    use crate::index::git_index_serialization::GitIndexSerializationRef;
     use bincode::serde;
 
     use super::*;

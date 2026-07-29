@@ -50,7 +50,7 @@ impl<'a> Searcher<'a> {
         Self {
             pool: RepoPool::new(rayon::current_num_threads(), path),
             index,
-            searcher: GitSearcher::new(index),
+            searcher: GitSearcher::new(index.into()),
         }
     }
 
