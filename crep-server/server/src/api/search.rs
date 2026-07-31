@@ -18,14 +18,10 @@ use git2::Repository;
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::info;
-use utoipa::OpenApi;
 use utoipa::ToSchema;
 
 use crate::api::error::ApiError;
 use crate::api::error::ErrorResponse;
-use crate::search::search::LineHighlight;
-use crate::search::search::LineMatch;
-use crate::search::search::MatchDetail;
 use crate::search::search::SearchHit;
 use crate::search::search_cache::CacheResult;
 use crate::server_context::ServerContext;
@@ -56,27 +52,6 @@ pub struct SearchRequest {
 pub struct SearchResponse {
     pub results: Vec<Option<SearchHit>>,
 }
-
-#[derive(OpenApi)]
-#[openapi(
-    paths(search),
-    components(
-        schemas(
-            SearchRequest,
-            SearchResponse,
-            SearchHit,
-            MatchDetail,
-            LineMatch,
-            LineHighlight,
-            SearchMode,
-            ErrorResponse
-        )
-    ),
-    tags(
-        (name = "search", description = "Git history search operations")
-    )
-)]
-pub struct ApiDoc;
 
 #[utoipa::path(
     post,

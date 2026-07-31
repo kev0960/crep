@@ -2,20 +2,31 @@ use std::sync::Arc;
 
 use crep_indexer::index::git_indexer::GitIndexer;
 use tokio::sync::RwLock;
-use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::indexer::index::SearchIndex;
 use crate::indexer::index::SearchIndexGuard;
+use crate::reindex_notify::reindex_signal::ReindexSignal;
+use crate::reindex_notify::reindex_signal::ReindexSignalReceiver;
+use crate::reindex_notify::reindex_signal::ReindexSignalSender;
 
 pub struct Indexer {
     index: Arc<RwLock<SearchIndex>>,
+    send_reindex_signal: ReindexSignalSender,
 }
 
 impl Indexer {
-    pub fn new(indexer: GitIndexer) -> Self {
+    pub fn new(
+        indexer: GitIndexer,
+        send_reindex_signal: ReindexSignalSender,
+    ) -> Self {
         Self {
             index: Arc::new(RwLock::new(SearchIndex::new(indexer))),
+            send_reindex_signal,
         }
+    }
+
+    pub fn request_reindex(&self, reindex_singal: ReindexSignal) {
+        self.send_reindex_signal.send(reindex_singal).unwrap();
     }
 
     pub async fn get_search_index(&self) -> SearchIndexGuard {
@@ -24,7 +35,7 @@ impl Indexer {
 
     pub fn spawn_re_indexer(
         &self,
-        recv_indexer_signal: UnboundedReceiver<()>,
+        recv_indexer_signal: ReindexSignalReceiver,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(
             ReIndexer {
@@ -37,13 +48,13 @@ impl Indexer {
 }
 
 struct ReIndexer {
-    recv_indexer_signal: UnboundedReceiver<()>,
+    recv_indexer_signal: ReindexSignalReceiver,
     index: Arc<RwLock<SearchIndex>>,
 }
 
 impl ReIndexer {
     async fn handle_re_index(mut self) {
-        while let Some(()) = self.recv_indexer_signal.recv().await {
+        while let Some(_signal) = self.recv_indexer_signal.recv().await {
             let mut index = self.index.write().await;
 
             index.refresh_all_words()

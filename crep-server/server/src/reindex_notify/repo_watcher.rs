@@ -1,15 +1,17 @@
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use notify::Event;
 use notify::EventKind;
 use notify::RecommendedWatcher;
 use notify::Watcher;
 use notify::event::ModifyKind;
+use tokio::sync::mpsc::UnboundedSender;
 
-use crate::watch::debouncer::Debouncer;
-use crate::watch::ignore_checker::IgnoreChecker;
+use crate::config::WatcherConfig;
+use crate::reindex_notify::debouncer::Debouncer;
+use crate::reindex_notify::reindex_signal::ReindexSignalSender;
 
 #[derive(Debug)]
 pub enum FsEventType {
@@ -38,17 +40,21 @@ impl FsEvent {
 }
 
 pub struct RepoWatcher {
-    pub debouncer: Arc<Debouncer>,
-    pub watcher: Option<RecommendedWatcher>,
+    pub watcher: RecommendedWatcher,
 }
 
 impl RepoWatcher {
-    pub fn start_watch(
-        &mut self,
-        path: &Path,
-        ignore_checker: IgnoreChecker,
-    ) -> anyhow::Result<()> {
-        let debouncer = self.debouncer.clone();
+    pub fn new(
+        config: &WatcherConfig,
+        watch_path: PathBuf,
+        send_indexer_signal: ReindexSignalSender,
+    ) -> anyhow::Result<Self> {
+        let debouncer = Arc::new(Debouncer::new(
+            send_indexer_signal,
+            Arc::new(Mutex::new(Vec::new())),
+            config.debounce_seconds,
+        ));
+
         let mut watcher =
             notify::recommended_watcher(move |res: notify::Result<Event>| {
                 if let Ok(event) = res {
@@ -56,11 +62,7 @@ impl RepoWatcher {
                         return;
                     }
 
-                    let paths: Vec<PathBuf> = event
-                        .paths
-                        .into_iter()
-                        .filter(|path| !ignore_checker.is_ignored(path))
-                        .collect();
+                    let paths: Vec<PathBuf> = event.paths.into_iter().collect();
 
                     // No need to wake up if all paths are ignored.
                     if paths.is_empty() {
@@ -74,11 +76,9 @@ impl RepoWatcher {
                 }
             })?;
 
-        watcher.watch(path, notify::RecursiveMode::Recursive)?;
+        watcher.watch(&watch_path, notify::RecursiveMode::Recursive)?;
 
-        self.watcher = Some(watcher);
-
-        Ok(())
+        Ok(Self { watcher })
     }
 }
 

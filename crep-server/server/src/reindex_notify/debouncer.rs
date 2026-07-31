@@ -4,10 +4,11 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use tokio::runtime::Handle;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 
-use crate::watch::repo_watcher::FsEvent;
+use crate::reindex_notify::reindex_signal::ReindexSignal;
+use crate::reindex_notify::reindex_signal::ReindexSignalSender;
+use crate::reindex_notify::repo_watcher::FsEvent;
 
 // Whenever the directory is changed, debouncer gets notified.
 // Debouncer will wake up the indexer N seconds later to batch multiple
@@ -16,14 +17,14 @@ use crate::watch::repo_watcher::FsEvent;
 pub struct Debouncer {
     file_paths_modified: Arc<Mutex<Vec<FsEvent>>>,
     is_timer_set: Arc<AtomicBool>,
-    send_indexer_signal: UnboundedSender<()>,
+    send_indexer_signal: ReindexSignalSender,
     handle: Handle,
     debounce_seconds: u64,
 }
 
 impl Debouncer {
     pub fn new(
-        send_indexer_signal: UnboundedSender<()>,
+        send_indexer_signal: ReindexSignalSender,
         file_paths_modified: Arc<Mutex<Vec<FsEvent>>>,
         debounce_seconds: u64,
     ) -> Self {
@@ -54,7 +55,12 @@ impl Debouncer {
             self.handle.spawn(async move {
                 sleep(Duration::from_secs(debounce_seconds)).await;
 
-                send_indexer_signal.send(()).expect("Send wakeup signal");
+                send_indexer_signal
+                    .send(ReindexSignal {
+                        head_commit_id: todo!(),
+                    })
+                    .expect("Send wakeup signal");
+
                 is_timer_set.store(false, std::sync::atomic::Ordering::Release);
             });
         }
