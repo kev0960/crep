@@ -5,6 +5,7 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct ServerConfig {
     pub repo_path: String,
+    pub branch_name: String,
     pub live_index_config: Option<LiveIndexConfig>,
 
     pub saved_index_path: String,
@@ -18,7 +19,7 @@ pub enum LiveIndexConfig {
 
 #[derive(Deserialize)]
 pub struct WatcherConfig {
-    pub debounce_seconds: u64,
+    pub debounce_milliseconds: u64,
 }
 
 impl ServerConfig {

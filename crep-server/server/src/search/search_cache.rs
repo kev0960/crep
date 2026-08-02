@@ -98,6 +98,10 @@ impl SearchCache {
             entry.raw_index_to_search_result.insert(index, result);
         }
     }
+
+    pub fn evict_cache_after_reindex(&self) {
+        self.results.lock().unwrap().clear()
+    }
 }
 
 #[derive(Default)]

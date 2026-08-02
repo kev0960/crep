@@ -20,10 +20,8 @@ pub fn router(state: ServerContext, config: &ServerConfig) -> Router {
         .route("/api/search", post(api::search::search))
         .route("/docs.json", get(api::docs_json));
 
-    if let Some(live_index_config) = &config.live_index_config {
-        if let LiveIndexConfig::OnWebhookNotify = live_index_config {
-            router = router.route("/webhook/reindex", post(reindex::reindex));
-        }
+    if let Some(LiveIndexConfig::OnWebhookNotify) = &config.live_index_config {
+        router = router.route("/webhook/reindex", post(reindex::reindex));
     }
 
     router.with_state(state)

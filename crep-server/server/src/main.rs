@@ -66,20 +66,11 @@ async fn main() -> anyhow::Result<()> {
         unbounded_channel::<ReindexSignal>();
     let git_indexer = GitIndexer::from_saved(serialized, index_config);
 
-    let indexer = Indexer::new(git_indexer, send_indexer_signal.clone());
-    indexer.spawn_re_indexer(recv_indexer_signal);
-
-    let mut repo_watcher: Option<RepoWatcher> = None;
-    if let Some(live_index_config) = &config.live_index_config {
-        if let LiveIndexConfig::WatchLiveUpdate(watch_config) =
-            live_index_config
-        {
-            repo_watcher = Some(RepoWatcher::new(
-                &watch_config,
-                PathBuf::from(&config.repo_path),
-                send_indexer_signal,
-            )?);
-        }
+    let mut _repo_watcher: Option<RepoWatcher> = None;
+    if let Some(LiveIndexConfig::WatchLiveUpdate(_)) = &config.live_index_config
+    {
+        _repo_watcher =
+            Some(RepoWatcher::new(&config, send_indexer_signal.clone())?);
     }
 
     info!(
@@ -92,7 +83,15 @@ async fn main() -> anyhow::Result<()> {
     let server_init_start_time = Instant::now();
     info!("Start building the server context...");
 
-    let context = ServerContext::new(&config, Arc::new(indexer))?;
+    let indexer = Arc::new(Indexer::new(
+        git_indexer,
+        &PathBuf::from(config.repo_path.clone()),
+        send_indexer_signal,
+    ));
+
+    let context = ServerContext::new(&config, indexer.clone())?;
+
+    indexer.spawn_re_indexer(recv_indexer_signal, context.search_cache.clone());
 
     let app = router(context, &config);
     let addr: SocketAddr = std::env::var("BIND_ADDR")
