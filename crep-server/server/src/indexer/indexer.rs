@@ -61,15 +61,22 @@ struct ReIndexer {
 impl ReIndexer {
     async fn handle_re_index(mut self) {
         while let Some(signal) = self.recv_indexer_signal.recv().await {
-            let mut index = self.index.write().await;
-            let result = index.do_incremental_index(&signal.head_commit_id);
+            let index = self.index.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let mut index = index.blocking_write();
+                index.do_incremental_index(&signal.head_commit_id)
+            })
+            .await;
 
             match result {
-                Ok(true) => {
+                Ok(Ok(true)) => {
                     self.search_cache.evict_cache_after_reindex();
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     eprintln!("Failed reindex {:?}", e);
+                }
+                Err(e) => {
+                    eprintln!("Reindex task failed {:?}", e);
                 }
                 _ => {}
             }
