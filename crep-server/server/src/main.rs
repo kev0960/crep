@@ -8,12 +8,15 @@ use clap::Parser;
 use crep_indexer::index::git_index_serialization::GitIndexSerialization;
 use crep_indexer::index::git_indexer::GitIndexer;
 use crep_indexer::index::git_indexer::GitIndexerConfig;
+use crep_server::config::LiveIndexConfig;
 use crep_server::config::ServerConfig;
-use crep_server::init::init_watcher_and_indexer;
+use crep_server::indexer::indexer::Indexer;
+use crep_server::reindex_notify::reindex_signal::ReindexSignal;
+use crep_server::reindex_notify::repo_watcher::RepoWatcher;
 use crep_server::router;
 use crep_server::server_context::ServerContext;
-use crep_server::watch::ignore_checker::IgnoreChecker;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc::unbounded_channel;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -49,7 +52,6 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Start setting up Repo indexer...");
     let repo_indexer_start_time = Instant::now();
-    let ignore_checker = IgnoreChecker::new(&config.repo_path);
 
     let serialized =
         GitIndexSerialization::load(&PathBuf::from(&config.saved_index_path))?;
@@ -60,15 +62,17 @@ async fn main() -> anyhow::Result<()> {
         ignore_utf8_error: true,
     };
 
+    let (send_indexer_signal, recv_indexer_signal) =
+        unbounded_channel::<ReindexSignal>();
     let git_indexer = GitIndexer::from_saved(serialized, index_config);
 
-    let (indexer, watcher) = init_watcher_and_indexer(&config, git_indexer);
+    let mut _repo_watcher: Option<RepoWatcher> = None;
+    if let Some(LiveIndexConfig::WatchLiveUpdate(_)) = &config.live_index_config
+    {
+        _repo_watcher =
+            Some(RepoWatcher::new(&config, send_indexer_signal.clone())?);
+    }
 
-    /*
-    watcher
-        .start_watch(Path::new(&config.repo_path), ignore_checker)
-        .expect("Unable to start the watch!");
-    */
     info!(
         "Setting up the repo watcher complete. Took {}s",
         Instant::now()
@@ -79,9 +83,17 @@ async fn main() -> anyhow::Result<()> {
     let server_init_start_time = Instant::now();
     info!("Start building the server context...");
 
-    let context = ServerContext::new(&config, Arc::new(indexer))?;
+    let indexer = Arc::new(Indexer::new(
+        git_indexer,
+        &PathBuf::from(config.repo_path.clone()),
+        send_indexer_signal,
+    ));
 
-    let app = router(context);
+    let context = ServerContext::new(&config, indexer.clone())?;
+
+    indexer.spawn_re_indexer(recv_indexer_signal, context.search_cache.clone());
+
+    let app = router(context, &config);
     let addr: SocketAddr = std::env::var("BIND_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3000".to_string())
         .parse()?;

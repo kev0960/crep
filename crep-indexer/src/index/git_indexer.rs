@@ -33,7 +33,7 @@ pub type CommitIndex = usize;
 pub type FileId = usize;
 
 pub struct GitIndexer {
-    config: GitIndexerConfig,
+    pub config: GitIndexerConfig,
 
     pub commit_index_to_commit_id: Vec<[u8; 20]>,
     pub commit_id_to_commit_index: AHashMap<[u8; 20], CommitIndex>,
@@ -779,8 +779,6 @@ struct GitDelta {
 #[cfg(test)]
 mod index_tree {
     use crate::index::document::WordIndex;
-    use crate::index::git_index_serialization::GitIndexSerializationRef;
-    use bincode::serde;
 
     use super::*;
 
